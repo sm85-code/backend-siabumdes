@@ -44,6 +44,9 @@ uvicorn main:app --reload --port 8080
 curl localhost:8080/health   # {"status":"ok","database":"connected"}
 ```
 
+Dokumentasi API (`/docs`, `/redoc`, `/openapi.json`) **mati secara default** (404). Untuk
+lokal/dev jalankan dengan `ENABLE_API_DOCS=true uvicorn main:app --reload --port 8080`.
+
 Pada database kosong, seed membuat user default (mis. `admin` / `admin123@`). **Segera ganti
 password** bila dipakai di luar lokal.
 
@@ -66,6 +69,7 @@ Semua nama di bawah diambil dari `os.getenv` di kode (lihat juga `.env.example`)
 | `CORS_ORIGINS` | | `http://localhost:3000` | Daftar origin dipisah koma (juga dipakai cek CSRF-origin) |
 | `CORS_ORIGIN_REGEX` | | — | Regex origin tambahan |
 | `APP_TITLE` | | `SIABUMDES API` | |
+| `ENABLE_API_DOCS` | | `false` | `true` = aktifkan `/docs`, `/redoc`, `/openapi.json`. Default mati (404) agar skema API tidak terekspos publik; aktifkan hanya untuk lokal/dev |
 | `GDRIVE_FOLDER_ID` | | — | Folder Drive utama (bukti transaksi/laporan) |
 | `GDRIVE_FOLDER_ID_LOGO` | | — | Folder logo organisasi |
 | `GDRIVE_FOLDER_ID_PHOTO` | | — | Folder foto profil user |

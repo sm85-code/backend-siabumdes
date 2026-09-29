@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Unit tests
+        # DATABASE_URL is intentionally unset: tests that need a real Postgres
+        # instance skip themselves (see tests/test_postgresql_integration.py)
+        # instead of failing, so this job stays fast and needs no DB service.
+        # `python -m pytest` (not the bare `pytest` script) so the repo root
+        # is added to sys.path -- otherwise `from modules...` / `from shared...`
+        # imports fail since tests/ has no package __init__.py.
+        run: python -m pytest tests/ -n 0
+
+  integration-pg:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: siabumdes
+          POSTGRES_PASSWORD: siabumdes
+          POSTGRES_DB: siabumdes_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U siabumdes -d siabumdes_test"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Postgres integration tests
+        env:
+          DATABASE_URL: postgresql://siabumdes:siabumdes@localhost:5432/siabumdes_test
+          # The postgres service container has no TLS; without this the
+          # connection is attempted with ssl=True and the integration test
+          # skips itself instead of running.
+          POSTGRES_SSL: "false"
+        run: python -m pytest tests/test_postgresql_integration.py tests/test_b1_stock_atomicity.py -n 0

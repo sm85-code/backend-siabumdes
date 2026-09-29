@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from time import monotonic
@@ -45,7 +46,19 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title=APP_TITLE, version="1.0.0", lifespan=lifespan)
+# Public API docs (Swagger UI, ReDoc, OpenAPI schema) are disabled by default
+# so the production API surface is not advertised. Set ENABLE_API_DOCS=true
+# (e.g. locally) to serve /docs, /redoc and /openapi.json again.
+ENABLE_API_DOCS = os.getenv("ENABLE_API_DOCS", "").strip().lower() in {"1", "true", "yes"}
+
+app = FastAPI(
+    title=APP_TITLE,
+    version="1.0.0",
+    lifespan=lifespan,
+    docs_url="/docs" if ENABLE_API_DOCS else None,
+    redoc_url="/redoc" if ENABLE_API_DOCS else None,
+    openapi_url="/openapi.json" if ENABLE_API_DOCS else None,
+)
 _login_attempts: dict[str, deque[float]] = defaultdict(deque)
 
 app.add_middleware(

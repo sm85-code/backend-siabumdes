@@ -1,0 +1,11 @@
+[tool.ruff]
+line-length = 120
+exclude = ["alembic/versions"]
+
+[tool.ruff.lint]
+# Keep this lenient on purpose: only catch real errors (undefined names, unused
+# imports, syntax issues) rather than enforcing a style rewrite across the
+# whole codebase. F841 (unused local variable) is left out because several
+# existing call sites assign-and-discard on purpose during in-progress work.
+select = ["E", "F", "W"]
+ignore = ["E501", "F841"]

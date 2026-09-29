@@ -1,0 +1,23 @@
+# Local Postgres for SIABUMDES integration tests (CI runs the same tests in
+# the `integration-pg` job of .github/workflows/ci.yml).
+#
+# Usage:
+#   docker compose -f docker-compose.pg-ci.yml up -d
+#   export DATABASE_URL=postgresql://siabumdes:siabumdes@127.0.0.1:55432/siabumdes_test POSTGRES_SSL=false
+#   python -m pytest tests/test_postgresql_integration.py tests/test_b1_stock_atomicity.py -n 0
+#   docker compose -f docker-compose.pg-ci.yml down -v
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: siabumdes
+      POSTGRES_PASSWORD: siabumdes
+      POSTGRES_DB: siabumdes_test
+    ports:
+      - "55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U siabumdes -d siabumdes_test"]
+      interval: 3s
+      timeout: 3s
+      retries: 10

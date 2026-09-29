@@ -1,0 +1,31 @@
+# Runtime — FastAPI + PostgreSQL (no MongoDB / pymongo / motor)
+fastapi==0.141.1
+uvicorn[standard]==0.54.0
+sqlalchemy[asyncio]==2.1.1
+asyncpg==0.31.0
+# SQLAlchemy 2.1 create_async_engine("postgresql://…") defaults to the
+# psycopg (v3) dialect; keep binary wheels so CI/Linux hosts don't need libpq headers.
+# App runtime still prefers asyncpg via shared.database._database_url rewrite.
+psycopg[binary]==3.2.13
+alembic==1.20.0
+pydantic[email]==2.13.5
+python-dotenv==1.2.3
+python-jose[cryptography]==3.5.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
+python-multipart==0.0.32
+reportlab==5.0.1
+weasyprint==70.0
+pydyf==0.12.1
+openpyxl==3.1.5
+python-docx==1.2.0
+google-api-python-client==2.200.0
+google-auth==2.58.1
+google-auth-httplib2==0.4.2
+google-auth-oauthlib==1.4.1
+
+# Dev / test
+pytest==9.1.1
+pytest-xdist==3.8.0
+ruff==0.16.9
+pytest-asyncio==1.4.0

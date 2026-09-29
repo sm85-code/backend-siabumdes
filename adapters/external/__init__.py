@@ -1,0 +1,1 @@
+"""Outbound external system adapters."""

@@ -62,7 +62,6 @@ Semua nama di bawah diambil dari `os.getenv` di kode (lihat juga `.env.example`)
 | `JWT_SECRET_BUMDES` | | — | Secret khusus tenant `bumdes`; bila di-set, dipakai menggantikan `JWT_SECRET` |
 | `JWT_ALGORITHM` | | `HS256` | |
 | `JWT_EXPIRE_HOURS` | | `168` | |
-| `JWT_COOKIE_NAME` | | `bumdes_token` | |
 | `COOKIE_SECURE` | | `true` | |
 | `COOKIE_SAMESITE` | | `none` | |
 | `COOKIE_PATH` | | `/` | |
@@ -120,8 +119,8 @@ downtime dan dengan rollback instan. Database **tidak** dipindah — app baru me
    - `DATABASE_URL` → **DB yang sama** dengan sm85-arch (DB SIABUMDES), `POSTGRES_SSL=true`
    - `JWT_SECRET` dan (jika dipakai) `JWT_SECRET_BUMDES` → **nilai yang sama persis**, agar
      cookie `bumdes_token` yang sudah beredar tetap valid (tidak ada logout massal)
-   - `JWT_COOKIE_NAME` (default `bumdes_token`), `JWT_EXPIRE_HOURS`, `JWT_ALGORITHM` bila
-     di-override di sm85-arch
+   - `JWT_EXPIRE_HOURS`, `JWT_ALGORITHM` bila di-override di sm85-arch (cookie name `bumdes_token`
+     is fixed in code, nothing to copy)
    - `CORS_ORIGINS` → minimal `https://siabumdes.ampelkuning.com` (+ origin lain yang dipakai
      FE SIABUMDES); `CORS_ORIGIN_REGEX` bila ada
    - `COOKIE_SECURE=true`, `COOKIE_SAMESITE=none` (FE & BE beda domain), `COOKIE_PATH`

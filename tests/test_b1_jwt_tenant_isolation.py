@@ -90,8 +90,10 @@ def test_fallback_to_shared_secret_when_tenant_unset(monkeypatch):
     assert payload["aud"] == "bumdes"
 
 
-def test_cookie_name_default_is_bumdes_token(monkeypatch):
-    monkeypatch.delenv("JWT_COOKIE_NAME", raising=False)
+def test_cookie_name_is_fixed_not_env_configurable(monkeypatch):
+    # Not a secret -- fixed in code so it can never end up unset/mismatched
+    # between the code that sets it and the code that reads it back.
+    monkeypatch.setenv("JWT_COOKIE_NAME", "something-else")
     sec = _reload_security(monkeypatch, JWT_SECRET="shared-secret-for-tests")
     assert sec.JWT_COOKIE_NAME == "bumdes_token"
 

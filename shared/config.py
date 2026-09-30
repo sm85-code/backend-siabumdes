@@ -51,7 +51,13 @@ JWT_SECRET = os.getenv("JWT_SECRET", "")
 JWT_SECRET_BUMDES = os.getenv("JWT_SECRET_BUMDES", "").strip()
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 JWT_EXPIRE_HOURS = int(os.getenv("JWT_EXPIRE_HOURS", str(24 * 7)))
-JWT_COOKIE_NAME = os.getenv("JWT_COOKIE_NAME", "bumdes_token")
+
+# Not a secret -- just the cookie's name, which the browser shows in
+# DevTools regardless. Fixed per tenant like sm85-arch's other tenants
+# (madrasah_token, toko_token, marketplace_erp_token), so it can never end
+# up unset/mismatched between the code that sets it and the code that reads
+# it back.
+JWT_COOKIE_NAME = "bumdes_token"
 
 # Stable tenant id used as JWT aud (and in iss = "sm85:<tenant>"). Kept
 # identical to sm85-arch so tokens issued there stay valid here when the same

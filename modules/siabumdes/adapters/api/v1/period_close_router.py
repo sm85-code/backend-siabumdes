@@ -7,7 +7,13 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from modules.siabumdes.adapters.api.deps import get_current_user, require_roles
-from modules.siabumdes.identity.application.services import list_closed_periods, record_audit
+from modules.siabumdes.identity.application.services import (
+    list_closed_periods,
+    list_locked_periods,
+    lock_period,
+    record_audit,
+    unlock_period,
+)
 from modules.siabumdes.identity.infrastructure.models import User
 from modules.siabumdes.application.closing import run_monthly_close, undo_monthly_close
 from shared.database import get_db
@@ -86,3 +92,63 @@ async def reopen_period(
         detail=f"Buka kembali periode {period} ({group}), {deleted} entri terhapus", ip=_client_ip(request),
     )
     return {"deleted_entries": deleted}
+
+
+class LockPeriodRequest(BaseModel):
+    period: str = Field(..., examples=["2026-09"])
+    group: str = Field(default="ALL", description="ALL, BUMDES, atau kode unit")
+
+
+@router.get("/reports/locked-periods")
+async def list_locked(
+    _: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+):
+    rows = await list_locked_periods(session)
+    return [
+        {
+            "period": row.period,
+            "group": row.group_code,
+            "locked_at": row.locked_at.isoformat(),
+            "locked_by": row.locked_by,
+        }
+        for row in rows
+    ]
+
+
+@router.post("/reports/lock-period")
+async def lock_period_endpoint(
+    payload: LockPeriodRequest,
+    request: Request,
+    admin: User = Depends(require_roles("admin")),
+    session: AsyncSession = Depends(get_db),
+):
+    """Kunci periode untuk non-admin; admin masih boleh mengoreksi."""
+    try:
+        row = await lock_period(session, payload.period, payload.group, admin.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await record_audit(
+        session, actor=admin, action="lock_period", entity="locked_periods", entity_id=f"{row.period}/{row.group_code}",
+        detail=f"Kunci periode {row.period} ({row.group_code})", ip=_client_ip(request),
+    )
+    return {"locked": True, "period": row.period, "group": row.group_code}
+
+
+@router.delete("/reports/lock-period")
+async def unlock_period_endpoint(
+    request: Request,
+    period: str = Query(...),
+    group: str = Query("ALL"),
+    admin: User = Depends(require_roles("admin")),
+    session: AsyncSession = Depends(get_db),
+):
+    try:
+        await unlock_period(session, period, group)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    await record_audit(
+        session, actor=admin, action="unlock_period", entity="locked_periods", entity_id=f"{period}/{group}",
+        detail=f"Buka kunci periode {period} ({group})", ip=_client_ip(request),
+    )
+    return {"locked": False}

@@ -8,7 +8,7 @@ from typing import Any, Optional
 from sqlalchemy import Select, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from modules.siabumdes.identity.infrastructure.models import AuditLog, ClosedPeriod, OrgProfile, SystemControl, User
+from modules.siabumdes.identity.infrastructure.models import AuditLog, ClosedPeriod, LockedPeriod, OrgProfile, SystemControl, User
 from shared.config import PUBLIC_ROLES, public_role
 from modules.siabumdes.report_branding import get_report_branding
 from shared.security import hash_password, verify_password
@@ -182,6 +182,49 @@ async def list_closed_periods(session: AsyncSession) -> list[ClosedPeriod]:
         select(ClosedPeriod).order_by(ClosedPeriod.period.desc(), ClosedPeriod.group_code.asc())
     )
     return list(rows.scalars())
+
+
+ALL_GROUPS = "ALL"
+
+
+async def list_locked_periods(session: AsyncSession) -> list[LockedPeriod]:
+    rows = await session.execute(
+        select(LockedPeriod).order_by(LockedPeriod.period.desc(), LockedPeriod.group_code.asc())
+    )
+    return list(rows.scalars())
+
+
+async def lock_period(session: AsyncSession, period: str, group: str, actor_id: str) -> LockedPeriod:
+    from modules.siabumdes.infrastructure.models import UnitUsaha
+    from modules.siabumdes.period import period_kind
+
+    period_kind(period or "")
+    group_code = (group or ALL_GROUPS).strip().upper()
+    if group_code not in (ALL_GROUPS, "BUMDES"):
+        if not await session.scalar(select(UnitUsaha.id).where(UnitUsaha.code == group_code)):
+            raise ValueError(f"Grup {group_code} tidak valid")
+    exists = await session.scalar(
+        select(LockedPeriod.id).where(LockedPeriod.period == period, LockedPeriod.group_code == group_code)
+    )
+    if exists:
+        raise ValueError(f"Periode {period} ({group_code}) sudah dikunci")
+    row = LockedPeriod(period=period, group_code=group_code, locked_by=actor_id)
+    session.add(row)
+    await session.flush()
+    return row
+
+
+async def unlock_period(session: AsyncSession, period: str, group: str) -> None:
+    group_code = (group or ALL_GROUPS).strip().upper()
+    row = (
+        await session.execute(
+            select(LockedPeriod).where(LockedPeriod.period == period, LockedPeriod.group_code == group_code)
+        )
+    ).scalar_one_or_none()
+    if not row:
+        raise LookupError("Kunci periode tidak ditemukan")
+    await session.delete(row)
+    await session.flush()
 
 
 async def record_audit(

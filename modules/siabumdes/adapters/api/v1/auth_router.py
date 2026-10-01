@@ -151,6 +151,7 @@ async def me(
 @router.post("/auth/change-password")
 async def change_password(
     payload: ChangePasswordRequest,
+    response: Response,
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ):
@@ -163,6 +164,9 @@ async def change_password(
     user.password_hash = hash_password(payload.new_password)
     user.must_change_password = False
     user.session_version += 1
+    # Cookie lama membawa session_version lama; terbitkan yang baru agar
+    # sesi pengguna sendiri tetap valid setelah ganti password.
+    set_auth_cookie(response, _token_for(user))
     return {"ok": True}
 
 

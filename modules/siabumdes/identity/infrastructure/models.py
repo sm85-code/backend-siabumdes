@@ -116,6 +116,22 @@ class AuditLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
 
 
+class LockedPeriod(Base):
+    """Kunci periode: non-admin tidak boleh menulis, admin masih boleh.
+
+    group_code: "ALL" (semua grup), "BUMDES", atau kode unit (UU01..).
+    """
+
+    __tablename__ = "locked_periods"
+    __table_args__ = (UniqueConstraint("period", "group_code", name="uq_locked_periods_period_group"),)
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=_uuid)
+    period: Mapped[str] = mapped_column(String(7), nullable=False, index=True)  # YYYY-MM
+    group_code: Mapped[str] = mapped_column(String(32), nullable=False, default="ALL")
+    locked_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    locked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
 class ClosedPeriod(Base):
     __tablename__ = "closed_periods"
     __table_args__ = (UniqueConstraint("period", "group_code", name="uq_closed_periods_period_group"),)

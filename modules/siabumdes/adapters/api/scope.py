@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from modules.siabumdes.identity.application.services import get_system_control
-from modules.siabumdes.identity.infrastructure.models import ClosedPeriod, User
+from modules.siabumdes.identity.infrastructure.models import ClosedPeriod, LockedPeriod, User
 from modules.siabumdes.infrastructure.models import UnitUsaha
 from shared.config import READONLY_ROLES, public_role
 
@@ -108,23 +108,44 @@ async def assert_can_mutate_period(
         )
 
     period = tx_date.strftime("%Y-%m")
-    if period in (user.blocked_periods or []) and role_of(user) != "admin":
-        raise HTTPException(status_code=403, detail=f"Periode {period} terkunci untuk akun ini")
-
     group_code = await unit_code_for(session, unit_usaha_id)
-    closed = (
-        await session.execute(
-            select(ClosedPeriod).where(
-                ClosedPeriod.period == period,
-                ClosedPeriod.group_code == group_code,
-            )
-        )
-    ).scalar_one_or_none()
-    if closed:
+
+    # Urutan: tutup buku (berlaku untuk semua role, termasuk admin) diperiksa
+    # lebih dulu supaya pesan errornya akurat, lalu kunci periode dan blokir
+    # per pengguna (keduanya hanya untuk non-admin).
+    if await _is_period_closed(session, period, group_code):
         raise HTTPException(
             status_code=400,
             detail=f"Buku periode {period} ({group_code}) sudah ditutup",
         )
+    if role_of(user) != "admin":
+        if await _is_period_locked(session, period, group_code):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Periode {period} ({group_code}) dikunci oleh Admin",
+            )
+        if period in (user.blocked_periods or []):
+            raise HTTPException(status_code=403, detail=f"Periode {period} terkunci untuk akun ini")
+
+
+async def _is_period_closed(session: AsyncSession, period: str, group_code: str) -> bool:
+    row = await session.scalar(
+        select(ClosedPeriod.id).where(
+            ClosedPeriod.period == period,
+            ClosedPeriod.group_code == group_code,
+        )
+    )
+    return row is not None
+
+
+async def _is_period_locked(session: AsyncSession, period: str, group_code: str) -> bool:
+    row = await session.scalar(
+        select(LockedPeriod.id).where(
+            LockedPeriod.period == period,
+            LockedPeriod.group_code.in_((group_code, "ALL")),
+        )
+    )
+    return row is not None
 
 
 def parse_date(value: Optional[str]) -> Optional[date]:

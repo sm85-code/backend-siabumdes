@@ -39,6 +39,7 @@ from adapters.external.gdrive_adapter import (
     upload_file_to_gdrive,
 )
 from modules.siabumdes.identity.infrastructure.models import User
+from modules.siabumdes.application.bagi_hasil_transfer import is_bh_reference
 from modules.siabumdes.application.services import FinanceService
 from modules.siabumdes.infrastructure.models import Account, JournalEntry, Transaction
 from shared.database import get_db
@@ -141,6 +142,15 @@ async def _account(session: AsyncSession, code: str, group: str) -> Account:
     if not row:
         raise HTTPException(status_code=400, detail=f"Akun {code} tidak ada di kelompok {group}")
     return row
+
+
+def _assert_not_bagi_hasil(reference: Optional[str]) -> None:
+    if is_bh_reference(reference):
+        raise HTTPException(
+            status_code=400,
+            detail="Transaksi bagi hasil otomatis tidak bisa dibuat, diubah, atau dihapus di sini. "
+            "Gunakan menu Laporan > Transfer Bagi Hasil.",
+        )
 
 
 async def _sync_journal(session: AsyncSession, tx: Transaction, group: str) -> None:
@@ -252,6 +262,7 @@ async def create_transaction(
     session: AsyncSession = Depends(get_db),
 ):
     assert_not_readonly(user)
+    _assert_not_bagi_hasil(payload.reference)
     unit_id = await scoped_unit_id(session, user, payload.unit_usaha_id)
     await assert_unit_active(session, unit_id)
     await assert_can_mutate_period(session, user, payload.date, unit_id)
@@ -290,6 +301,8 @@ async def update_transaction(
     ).scalar_one_or_none()
     if not tx:
         raise HTTPException(status_code=404, detail="Transaksi tidak ditemukan")
+    _assert_not_bagi_hasil(tx.reference)
+    _assert_not_bagi_hasil(payload.reference)
     if not can_access_unit(user, tx.unit_usaha_id):
         raise HTTPException(status_code=403, detail="Hanya bisa mengedit transaksi unit Anda")
     unit_id = await scoped_unit_id(session, user, payload.unit_usaha_id if not is_pengelola(user) else tx.unit_usaha_id)
@@ -330,6 +343,7 @@ async def delete_transaction(
     tx = await session.get(Transaction, tx_id)
     if not tx:
         return {"deleted": 0}
+    _assert_not_bagi_hasil(tx.reference)
     await assert_can_mutate_period(session, user, tx.date, tx.unit_usaha_id)
     for proof in list(tx.proofs or []):
         fid = proof.get("file_id")

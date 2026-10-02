@@ -1,12 +1,16 @@
 """Monthly closing journals — POST /api/reports/close-period."""
 from __future__ import annotations
 
+from datetime import date
+
 from modules.siabumdes.money_json import money_str
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from modules.siabumdes.adapters.api.deps import get_current_user, require_roles
+from modules.siabumdes.adapters.api.scope import assert_can_mutate_period
 from modules.siabumdes.identity.application.services import (
     list_closed_periods,
     list_locked_periods,
@@ -15,6 +19,13 @@ from modules.siabumdes.identity.application.services import (
     unlock_period,
 )
 from modules.siabumdes.identity.infrastructure.models import User
+from modules.siabumdes.infrastructure.models import UnitUsaha
+from modules.siabumdes.application.bagi_hasil_transfer import (
+    list_bagi_hasil_transfers,
+    run_bagi_hasil_transfer,
+    transfer_transactions,
+    undo_bagi_hasil_transfer,
+)
 from modules.siabumdes.application.closing import run_monthly_close, undo_monthly_close
 from shared.database import get_db
 
@@ -152,3 +163,76 @@ async def unlock_period_endpoint(
         detail=f"Buka kunci periode {period} ({group})", ip=_client_ip(request),
     )
     return {"locked": False}
+
+
+class BagiHasilTransferRequest(BaseModel):
+    period: str = Field(..., examples=["2026-03"])
+    group: str = Field(default="BUMDES")
+
+
+@router.post("/reports/bagi-hasil-transfer")
+async def bagi_hasil_transfer(
+    payload: BagiHasilTransferRequest,
+    request: Request,
+    admin: User = Depends(require_roles("admin")),
+    session: AsyncSession = Depends(get_db),
+):
+    """Transfer bagi hasil: lunasi saldo utang bagi hasil setelah tutup buku."""
+    try:
+        result = await run_bagi_hasil_transfer(
+            session, period=payload.period, group=payload.group, actor_id=admin.id
+        )
+        # Tanggal transaksi tidak boleh jatuh di periode yang sudah ditutup; HTTPException
+        # di sini membatalkan seluruh transaksi database.
+        when = date.fromisoformat(result["date"])
+        if result["group"] == "BUMDES":
+            await assert_can_mutate_period(session, admin, when, None)
+        else:
+            try:
+                # Sisi Pusat bertanggal akhir bulan terpilih: Pusat belum boleh tutup buku.
+                await assert_can_mutate_period(session, admin, date.fromisoformat(result["pusat_date"]), None)
+            except HTTPException as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Periode {payload.period} (BUMDES) sudah tutup buku; transfer bagi hasil unit "
+                    f"harus dilakukan sebelum BUMDES tutup buku. ({exc.detail})",
+                ) from exc
+            unit_id = await session.scalar(select(UnitUsaha.id).where(UnitUsaha.code == result["group"]))
+            await assert_can_mutate_period(session, admin, when, unit_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await record_audit(
+        session, actor=admin, action="bagi_hasil_transfer", entity="transactions",
+        entity_id=f"{payload.period}/{result['group']}",
+        detail=f"Transfer bagi hasil {payload.period} ({result['group']}) Rp {result['total']}", ip=_client_ip(request),
+    )
+    return result
+
+
+@router.get("/reports/bagi-hasil-transfers")
+async def list_bagi_hasil(
+    _: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+):
+    return await list_bagi_hasil_transfers(session)
+
+
+@router.delete("/reports/bagi-hasil-transfer")
+async def cancel_bagi_hasil_transfer(
+    request: Request,
+    period: str = Query(...),
+    group: str = Query("BUMDES"),
+    admin: User = Depends(require_roles("admin")),
+    session: AsyncSession = Depends(get_db),
+):
+    txs = await transfer_transactions(session, period, group)
+    if not txs:
+        raise HTTPException(status_code=404, detail="Transfer bagi hasil tidak ditemukan")
+    for tx in txs:
+        await assert_can_mutate_period(session, admin, tx.date, tx.unit_usaha_id)
+    deleted = await undo_bagi_hasil_transfer(session, txs)
+    await record_audit(
+        session, actor=admin, action="bagi_hasil_cancel", entity="transactions", entity_id=f"{period}/{group}",
+        detail=f"Batalkan transfer bagi hasil {period} ({group}), {deleted} transaksi terhapus", ip=_client_ip(request),
+    )
+    return {"deleted_transactions": deleted}

@@ -106,7 +106,7 @@ def test_split_amount_sums_exactly_and_drops_zero_parts():
     parts = split_amount(Decimal("100.00"), [("a", Decimal("35")), ("b", Decimal("7")),
                                              ("c", Decimal("5")), ("d", Decimal("5"))])
     assert sum(a for _, a in parts) == Decimal("100.00")
-    assert [l for l, _ in parts] == ["a", "b", "c", "d"]
+    assert [label for label, _ in parts] == ["a", "b", "c", "d"]
     assert split_amount(Decimal("10"), [("a", Decimal("70")), ("b", Decimal("0"))]) == [("a", Decimal("10.00"))]
     with pytest.raises(ValueError):
         split_amount(Decimal("10"), [("a", Decimal("0"))])

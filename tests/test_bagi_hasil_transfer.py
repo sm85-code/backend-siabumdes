@@ -24,7 +24,7 @@ from modules.siabumdes.application.bagi_hasil_transfer import (  # noqa: E402
     transfer_transactions,
     undo_bagi_hasil_transfer,
 )
-from modules.siabumdes.application.closing import undo_monthly_close  # noqa: E402
+from modules.siabumdes.application.closing import run_monthly_close, undo_monthly_close  # noqa: E402
 from modules.siabumdes.identity.infrastructure.models import (  # noqa: E402
     ClosedPeriod,
     OrgProfile,
@@ -79,6 +79,8 @@ async def _seed(session):
         _acc("2.1.03.01", "Utang BH BUMDES", "kewajiban", "utang_bagi_hasil_bumdes", "BUMDES", "kredit"),
         _acc("4.1.01.02", "Pendapatan Bagi Hasil", "pendapatan", "pendapatan_operasional", "BUMDES", "kredit"),
         _acc("3.9.01.01", "Ikhtisar", "ekuitas", "ikhtisar_laba_rugi", "BUMDES", "kredit"),
+        _acc("3.2.01.01", "Bagi Hasil Desa", "ekuitas", "bagi_hasil_desa", "BUMDES", "kredit"),
+        _acc("3.3.01.02", "Laba Dicadangkan", "ekuitas", "laba_dicadangkan", "BUMDES", "kredit"),
         _acc("1.1.01.11", "Kas UU01", "aset", "kas_bank", "UU01"),
         _acc("2.1.03.11", "Utang BH Unit", "kewajiban", "utang_bagi_hasil_unit", "UU01", "kredit"),
         _acc("3.9.01.11", "Ikhtisar UU01", "ekuitas", "ikhtisar_laba_rugi", "UU01", "kredit"),
@@ -213,3 +215,29 @@ async def test_older_period_transfer_blocked_when_newer_exists(session):
     await run_bagi_hasil_transfer(session, period="2026-02", group="UU01", actor_id="a")
     with pytest.raises(ValueError, match="lebih baru"):
         await run_bagi_hasil_transfer(session, period="2026-01", group="UU01", actor_id="a")
+
+
+@pytest.mark.asyncio
+async def test_bumdes_close_requires_units_with_saldo_to_transfer_first(session):
+    unit = await _seed(session)
+    _close(session, "2026-01", "UU01")
+    await _credit_utang(session, when=date(2026, 1, 31), amount="100000", code="2.1.03.11",
+                        ikhtisar="3.9.01.11", unit_id=unit.id)
+
+    with pytest.raises(ValueError, match=r"unit UU01 masih punya saldo utang bagi hasil"):
+        await run_monthly_close(session, period="2026-01", group="BUMDES", actor_id="a")
+
+    await run_bagi_hasil_transfer(session, period="2026-01", group="UU01", actor_id="a")
+    res = await run_monthly_close(session, period="2026-01", group="BUMDES", actor_id="a")
+    assert res["closed"] is True and res["outcome"] == "laba"
+    # Penerimaan 70% dari unit = pendapatan Pusat Januari; 52% darinya jadi utang bagi hasil BUMDES.
+    assert res["laba_bersih"] == "70000.00"
+    utang = (await session.execute(
+        select(Transaction).where(Transaction.credit_account_code == "2.1.03.01", Transaction.reference == "CLOSE-2026-01-BUMDES")
+    )).scalars().all()
+    assert sum(t.amount for t in utang) == Decimal("36400.00")
+
+    # Sesudah BUMDES tutup, transfer unit yang tertinggal tidak bisa lagi (lihat router);
+    # unit tanpa saldo tidak menghalangi tutup buku.
+    res2 = await run_monthly_close(session, period="2026-02", group="BUMDES", actor_id="a")
+    assert res2["closed"] is True

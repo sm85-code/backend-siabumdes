@@ -360,3 +360,25 @@ async def later_or_equal_transfer_periods(session: AsyncSession, period: str, gr
     ).scalars().all()
     periods = [r[len(BH_REF_PREFIX) : len(BH_REF_PREFIX) + 7] for r in refs]
     return sorted(p for p in periods if p >= period)
+
+
+async def units_with_unpaid_bagi_hasil(session: AsyncSession, period: str) -> list[tuple[str, Decimal]]:
+    """Unit yang masih punya saldo utang bagi hasil untuk `period` (belum ditransfer).
+
+    Saldo dihitung sampai tanggal 1 bulan berikutnya, supaya pembayaran transfer
+    (bertanggal 1 bulan berikutnya) ikut mengurangi; transfer periode yang lebih baru
+    yang sudah melunasi saldo ini juga terhitung."""
+    cutoff = next_month_first(period)
+    out: list[tuple[str, Decimal]] = []
+    for unit in (await session.execute(select(UnitUsaha).order_by(UnitUsaha.code))).scalars():
+        utang = (
+            await session.execute(
+                select(Account).where(Account.group_code == unit.code, Account.subcategory == SUB_UTANG_BH_UNIT)
+            )
+        ).scalars().first()
+        if not utang:
+            continue
+        saldo = await _saldo_utang(session, utang, unit.id, cutoff)
+        if saldo > 0:
+            out.append((unit.code, saldo))
+    return out

@@ -145,6 +145,18 @@ async def run_monthly_close(
     if existing:
         raise ValueError(f"Periode {period} ({group_code}) sudah ditutup")
 
+    if group_code == "BUMDES":
+        # Impor lokal: bagi_hasil_transfer mengimpor modul ini (hindari siklus).
+        from modules.siabumdes.application.bagi_hasil_transfer import units_with_unpaid_bagi_hasil
+
+        unpaid = await units_with_unpaid_bagi_hasil(session, period)
+        if unpaid:
+            raise ValueError(
+                f"Tutup buku BUMDES {period} ditolak: unit {', '.join(code for code, _ in unpaid)} "
+                f"masih punya saldo utang bagi hasil. Lakukan Transfer Bagi Hasil periode {period} "
+                "untuk unit tersebut terlebih dahulu."
+            )
+
     start, end = _period_range(period)
     unit = await _resolve_unit(session, group_code)
     unit_id = unit.id if unit else None

@@ -192,7 +192,8 @@ async def test_unit_monthly_transfer_pays_bumdes_and_records_pusat_side(session)
     assert len(pusat_txs) == 1
     p = pusat_txs[0]
     assert (p.debit_account_code, p.credit_account_code, p.amount) == ("1.1.01.01", "4.1.01.02", Decimal("700000.70"))
-    assert p.date == date(2027, 1, 1)
+    assert p.date == date(2026, 12, 31)  # sisi Pusat: akhir bulan terpilih
+    assert all(t.date == date(2027, 1, 1) for t in unit_txs)
 
     lst = await list_bagi_hasil_transfers(session)
     assert lst[0]["total"] == "1000001.00" and lst[0]["entries"] == 3

@@ -7,9 +7,10 @@ dengan proporsi 35:7:5:5 (dari konfigurasi Profil BUMDES), kas dikurangi.
 Unit usaha (UU01..UU06): per bulan. Saldo `utang_bagi_hasil_unit` dibayarkan
 ke BUMDES (70%) dan Pengelola (30%). Karena pencatatan tiap kelompok terpisah
 (tidak ada konsolidasi), bagian BUMDES juga dicatat di Pusat sebagai kas masuk
-dan Pendapatan Bagi Hasil.
+dan Pendapatan Bagi Hasil, bertanggal AKHIR bulan terpilih (masuk laba Pusat
+bulan itu -- Pusat tutup buku setelah semua unit transfer).
 
-Semua transaksi bertanggal tanggal 1 bulan berikutnya dan memakai referensi
+Transaksi pembayaran bertanggal tanggal 1 bulan berikutnya; semua transaksi memakai referensi
 `BAGIHASIL-{periode}-{kelompok}` sebagai penanda (cegah ganda, dasar pembatalan).
 """
 from __future__ import annotations
@@ -168,6 +169,7 @@ async def _post(
     session: AsyncSession,
     *,
     when: date,
+    when_override: Optional[date] = None,
     unit_id: Optional[str],
     tx_type: str,
     desc: str,
@@ -177,6 +179,7 @@ async def _post(
     reference: str,
     actor_id: str,
 ) -> Transaction:
+    when = when_override or when
     tx = Transaction(
         date=when,
         unit_usaha_id=unit_id,
@@ -275,6 +278,7 @@ async def run_bagi_hasil_transfer(
                 unit_id=None,
                 tx_type=TYPE_PUSAT_MASUK,
                 desc=f"Penerimaan Bagi Hasil {group_code} {period}",
+                when_override=end,
                 amount=amount,
                 debit=await _account_by_code(session, "BUMDES", KAS_PUSAT_CODE),
                 credit=await _account_by_code(session, "BUMDES", PENDAPATAN_BH_PUSAT_CODE),
@@ -287,6 +291,7 @@ async def run_bagi_hasil_transfer(
         "period": period,
         "group": group_code,
         "date": when.isoformat(),
+        "pusat_date": end.isoformat(),
         "total": money_str(saldo),
         "items": items,
     }

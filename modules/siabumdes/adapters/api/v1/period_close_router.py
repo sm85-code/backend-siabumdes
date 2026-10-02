@@ -182,11 +182,21 @@ async def bagi_hasil_transfer(
         result = await run_bagi_hasil_transfer(
             session, period=payload.period, group=payload.group, actor_id=admin.id
         )
-        # Tanggal transaksi (1 bulan berikutnya) tidak boleh jatuh di periode yang sudah
-        # ditutup; HTTPException di sini membatalkan seluruh transaksi database.
+        # Tanggal transaksi tidak boleh jatuh di periode yang sudah ditutup; HTTPException
+        # di sini membatalkan seluruh transaksi database.
         when = date.fromisoformat(result["date"])
-        await assert_can_mutate_period(session, admin, when, None)  # Pusat
-        if result["group"] != "BUMDES":
+        if result["group"] == "BUMDES":
+            await assert_can_mutate_period(session, admin, when, None)
+        else:
+            try:
+                # Sisi Pusat bertanggal akhir bulan terpilih: Pusat belum boleh tutup buku.
+                await assert_can_mutate_period(session, admin, date.fromisoformat(result["pusat_date"]), None)
+            except HTTPException as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Periode {payload.period} (BUMDES) sudah tutup buku; transfer bagi hasil unit "
+                    f"harus dilakukan sebelum BUMDES tutup buku. ({exc.detail})",
+                ) from exc
             unit_id = await session.scalar(select(UnitUsaha.id).where(UnitUsaha.code == result["group"]))
             await assert_can_mutate_period(session, admin, when, unit_id)
     except ValueError as exc:

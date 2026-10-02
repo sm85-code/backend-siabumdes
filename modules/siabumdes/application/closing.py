@@ -290,6 +290,15 @@ async def undo_monthly_close(session: AsyncSession, period: str, group: str) -> 
     if not row:
         raise LookupError("Periode tertutup tidak ditemukan")
 
+    # Impor lokal: bagi_hasil_transfer mengimpor modul ini (hindari siklus).
+    from modules.siabumdes.application.bagi_hasil_transfer import later_or_equal_transfer_periods
+
+    blocking = await later_or_equal_transfer_periods(session, period, group_code)
+    if blocking:
+        raise ValueError(
+            f"Batalkan transfer bagi hasil periode {', '.join(blocking)} ({group_code}) terlebih dahulu"
+        )
+
     reference = _close_ref(period, group_code)
     txs = list(
         (

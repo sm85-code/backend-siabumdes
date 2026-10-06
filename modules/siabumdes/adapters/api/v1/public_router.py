@@ -4,12 +4,12 @@ from __future__ import annotations
 from datetime import date
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from modules.siabumdes.application.reporting import ReportingService, _f
 from modules.siabumdes.money_json import stringify_money_fields
-from modules.siabumdes.infrastructure.models import Account, Transaction, UnitUsaha
+from modules.siabumdes.infrastructure.models import Account, Transaction
 from shared.database import get_db
 
 router = APIRouter(prefix="/api/public", tags=["public"])
@@ -26,15 +26,7 @@ async def public_summary(session: AsyncSession = Depends(get_db)):
     txs = list(
         (
             await session.execute(
-                select(Transaction).where(
-                    Transaction.date >= start,
-                    Transaction.date <= end,
-                    # BUMDES pusat has no unit ID (see unit_code_for).
-                    or_(
-                        Transaction.unit_usaha_id.is_(None),
-                        Transaction.unit_usaha.has(UnitUsaha.code == "BUMDES"),
-                    ),
-                )
+                select(Transaction).where(Transaction.date >= start, Transaction.date <= end)
             )
         ).scalars()
     )

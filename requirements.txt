@@ -25,6 +25,7 @@ google-auth-httplib2==0.4.2
 google-auth-oauthlib==1.4.1
 
 # Dev / test
+httpx2==2.13.1
 pytest==9.1.1
 pytest-xdist==3.8.0
 ruff==0.16.9

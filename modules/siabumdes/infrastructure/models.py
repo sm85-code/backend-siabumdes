@@ -210,3 +210,18 @@ class YieldPartner(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     capital: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class YieldPayment(Base):
+    """Recorded monthly payout, independent of financial journal posting."""
+    __tablename__ = "yield_payments"
+    __table_args__ = (UniqueConstraint("partner_id", "year", "month", name="uq_yield_payment_period"),)
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=_uuid)
+    partner_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("yield_partners.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    year: Mapped[int] = mapped_column(nullable=False)
+    month: Mapped[int] = mapped_column(nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    automatic: Mapped[bool] = mapped_column(Boolean, nullable=False)

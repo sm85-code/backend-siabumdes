@@ -10,17 +10,27 @@ from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from modules.siabumdes.adapters.api.deps import get_current_user  # noqa: E402
 from modules.siabumdes.adapters.api.v1 import yield_router as yr  # noqa: E402
-from modules.siabumdes.infrastructure.models import YieldPartner, UnitUsaha  # noqa: E402
+from modules.siabumdes.infrastructure.models import YieldPartner, YieldPayment, UnitUsaha  # noqa: E402
 from shared.database import get_db  # noqa: E402
 
 
 @pytest.fixture
 def client(monkeypatch):
     unit = SimpleNamespace(id='u4', code='UU04', active=True)
-    state = SimpleNamespace(user=SimpleNamespace(id='actor', name='Admin', role='admin', unit_usaha_id=None), unit=unit, rows={})
+    state = SimpleNamespace(user=SimpleNamespace(id='actor', name='Admin', role='admin', unit_usaha_id=None), unit=unit, rows={}, payments={})
 
     class Session:
         async def execute(self, stmt):
+            if not hasattr(stmt, 'column_descriptions'):
+                params = stmt.compile().params
+                if stmt.is_insert:
+                    key = (params['partner_id'], params['year'], params['month'])
+                    state.payments[key] = SimpleNamespace(**{k: params[k] for k in ('partner_id', 'year', 'month', 'amount')})
+                    return SimpleNamespace(rowcount=1)
+                key = (params['partner_id_1'], params['year_1'], params['month_1'])
+                return SimpleNamespace(rowcount=1 if state.payments.pop(key, None) else 0)
+            if stmt.column_descriptions[0]['entity'] is YieldPayment:
+                return SimpleNamespace(scalars=lambda: [p for p in state.payments.values() if p.year == stmt.compile().params['year_1']])
             if stmt.column_descriptions[0]['entity'] is UnitUsaha:
                 return SimpleNamespace(scalar_one_or_none=lambda: unit)
             return SimpleNamespace(scalars=lambda: list(state.rows.values()))
@@ -87,3 +97,34 @@ def test_inactive_and_foreign_partner_protection(client):
     assert http.delete('/api/imbal-hasil/mitra/foreign').status_code == 404
     assert http.put('/api/imbal-hasil/mitra/foreign', json={'name': 'B', 'capital': '100'}).status_code == 404
 
+
+
+def test_payment_input_and_scope(client):
+    http, state = client
+    pid = http.post('/api/imbal-hasil/mitra', json={'name': 'P', 'capital': '1000000'}).json()['id']
+    url = f'/api/imbal-hasil/mitra/{pid}/pembayaran'
+    assert http.put(url, json={'year': 2026, 'month': 1, 'automatic': True}).json()['amount'] == '30000.00'
+    assert http.put(url, json={'year': 2027, 'month': 1, 'amount': '12345.67'}).json()['amount'] == '12345.67'
+    for payload in ({'year': 2026, 'month': 1}, {'year': 2026, 'month': 13, 'amount': '1'}, {'year': 2026, 'amount': '1'}, {'year': 2026, 'month': 1, 'amount': '-1'}):
+        assert http.put(url, json=payload).status_code == 422
+        assert http.request('DELETE', url, json=payload).status_code == 422
+    assert http.request('DELETE', url, json={'year': 2026, 'month': 1, 'automatic': True}).status_code == 204
+    state.user.role, state.user.unit_usaha_id = 'pengelola', 'u3'
+    assert http.put(url, json={'year': 2026, 'month': 1, 'amount': '1'}).status_code == 403
+    assert http.request('DELETE', url, json={'year': 2026, 'month': 1, 'amount': '1'}).status_code == 403
+
+
+def test_payments_keep_years_separate_and_preserve_recorded_amount(client):
+    http, _ = client
+    pid = http.post('/api/imbal-hasil/mitra', json={'name': 'Mitra', 'capital': '1000000'}).json()['id']
+    url = f'/api/imbal-hasil/mitra/{pid}/pembayaran'
+    assert http.put(url, json={'year': 2026, 'month': 1, 'automatic': True, 'amount': '999'}).status_code == 200
+    assert http.put(url, json={'year': 2027, 'month': 1, 'amount': '12000'}).status_code == 200
+    http.put(f'/api/imbal-hasil/mitra/{pid}', json={'name': 'Mitra', 'capital': '2000000'})
+    assert http.get('/api/imbal-hasil/mitra?year=2026').json()['items'][0]['payments'] == {'1': '30000.00'}
+    assert http.get('/api/imbal-hasil/mitra?year=2027').json()['items'][0]['payments'] == {'1': '12000'}
+    http.put(url, json={'year': 2026, 'month': 1, 'amount': '45000'})
+    assert http.get('/api/imbal-hasil/mitra?year=2026').json()['items'][0]['payments'] == {'1': '45000'}
+    assert http.request('DELETE', url, json={'year': 2026, 'month': 1, 'automatic': True}).status_code == 204
+    assert http.get('/api/imbal-hasil/mitra?year=2026').json()['items'][0]['payments'] == {}
+    assert http.get('/api/imbal-hasil/mitra?year=2027').json()['items'][0]['payments'] == {'1': '12000'}

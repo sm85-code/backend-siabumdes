@@ -1,16 +1,18 @@
-"""UU04 partner capital register; monthly payments await a defined workflow."""
+"""UU04 partner register and annual monthly payout records (no journal posting)."""
+from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import delete, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from modules.siabumdes.adapters.api.deps import require_roles
 from modules.siabumdes.adapters.api.scope import assert_unit_active
 from modules.siabumdes.identity.application.services import record_audit
 from modules.siabumdes.identity.infrastructure.models import User
-from modules.siabumdes.infrastructure.models import UnitUsaha, YieldPartner
+from modules.siabumdes.infrastructure.models import UnitUsaha, YieldPartner, YieldPayment
 from shared.config import public_role
 from shared.database import get_db
 
@@ -54,10 +56,20 @@ async def partner_for(session: AsyncSession, unit: UnitUsaha, partner_id: str) -
 
 
 @router.get("/mitra")
-async def list_partners(unit: UnitUsaha = Depends(require_yield_unit), session: AsyncSession = Depends(get_db)):
+async def list_partners(year: int | None = Query(None, ge=1900, le=9999), unit: UnitUsaha = Depends(require_yield_unit), session: AsyncSession = Depends(get_db)):
     rows = (await session.execute(select(YieldPartner).where(YieldPartner.unit_usaha_id == unit.id)
                                   .order_by(YieldPartner.created_at, YieldPartner.id))).scalars()
-    return {"unit_active": unit.active, "items": [partner_out(row) for row in rows]}
+    year = year or date.today().year
+    items = [partner_out(row) for row in rows]
+    payments = (await session.execute(select(YieldPayment).join(YieldPartner)
+        .where(YieldPartner.unit_usaha_id == unit.id, YieldPayment.year == year))).scalars()
+    by_partner = {row["id"]: row for row in items}
+    for row in items:
+        row["payments"] = {}
+    for payment in payments:
+        if payment.partner_id in by_partner:
+            by_partner[payment.partner_id]["payments"][str(payment.month)] = str(payment.amount)
+    return {"unit_active": unit.active, "items": items}
 
 
 async def save_partner(body, row, session, actor, request, action):
@@ -95,3 +107,47 @@ async def delete_partner(partner_id: str, request: Request, unit: UnitUsaha = De
     await record_audit(session, actor=actor, action="delete_yield_partner", entity="yield_partners", entity_id=row.id,
                        detail=f"Hapus mitra {row.name}", ip=request.client.host if request.client else "")
     await session.delete(row)
+
+
+class PaymentIn(BaseModel):
+    year: int = Field(ge=1900, le=9999)
+    month: int = Field(ge=1, le=12)
+    automatic: bool = False
+    amount: Decimal | None = Field(default=None, ge=0, max_digits=18, decimal_places=2)
+
+
+def payment_amount(body: PaymentIn, partner: YieldPartner) -> Decimal:
+    if body.automatic:
+        return (partner.capital * Decimal("0.03")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    if body.amount is None:
+        raise HTTPException(422, "Pilih nilai otomatis atau isi nominal manual, dan pilih bulan")
+    return body.amount
+
+
+@router.put("/mitra/{partner_id}/pembayaran")
+async def save_payment(partner_id: str, body: PaymentIn, request: Request,
+                       unit: UnitUsaha = Depends(require_yield_writer), session: AsyncSession = Depends(get_db),
+                       actor: User = Depends(require_roles("admin", "direktur", "bendahara", "pengelola"))):
+    partner = await partner_for(session, unit, partner_id)
+    amount = payment_amount(body, partner)
+    stmt = insert(YieldPayment).values(partner_id=partner.id, year=body.year, month=body.month,
+                                       amount=amount, automatic=body.automatic)
+    await session.execute(stmt.on_conflict_do_update(constraint="uq_yield_payment_period",
+        set_={"amount": amount, "automatic": body.automatic}))
+    await record_audit(session, actor=actor, action="save_yield_payment", entity="yield_partners", entity_id=partner.id,
+        detail=f"Pembayaran {body.year}-{body.month:02d}: {amount}", ip=request.client.host if request.client else "")
+    return {"month": body.month, "year": body.year, "amount": str(amount)}
+
+
+@router.delete("/mitra/{partner_id}/pembayaran", status_code=204)
+async def delete_payment(partner_id: str, body: PaymentIn, request: Request,
+                         unit: UnitUsaha = Depends(require_yield_writer), session: AsyncSession = Depends(get_db),
+                         actor: User = Depends(require_roles("admin", "direktur", "bendahara", "pengelola"))):
+    partner = await partner_for(session, unit, partner_id)
+    payment_amount(body, partner)  # same input requirements as save
+    result = await session.execute(delete(YieldPayment).where(YieldPayment.partner_id == partner.id,
+                                    YieldPayment.year == body.year, YieldPayment.month == body.month))
+    if not result.rowcount:
+        raise HTTPException(404, "Belum ada pembayaran untuk bulan yang dipilih")
+    await record_audit(session, actor=actor, action="delete_yield_payment", entity="yield_partners", entity_id=partner.id,
+        detail=f"Hapus pembayaran {body.year}-{body.month:02d}", ip=request.client.host if request.client else "")

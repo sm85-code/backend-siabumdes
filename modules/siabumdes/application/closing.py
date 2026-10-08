@@ -152,7 +152,7 @@ async def run_monthly_close(
         unpaid = await units_with_unpaid_bagi_hasil(session, period)
         if unpaid:
             raise ValueError(
-                f"Tutup buku BUMDES {period} ditolak: unit {', '.join(code for code, _ in unpaid)} "
+                f"Tutup buku BUMDes {period} ditolak: unit {', '.join(code for code, _ in unpaid)} "
                 f"masih punya saldo utang bagi hasil. Lakukan Transfer Bagi Hasil periode {period} "
                 "untuk unit tersebut terlebih dahulu."
             )

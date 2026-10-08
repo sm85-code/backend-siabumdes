@@ -194,8 +194,8 @@ async def bagi_hasil_transfer(
             except HTTPException as exc:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Periode {payload.period} (BUMDES) sudah tutup buku; transfer bagi hasil unit "
-                    f"harus dilakukan sebelum BUMDES tutup buku. ({exc.detail})",
+                    detail=f"Periode {payload.period} (BUMDes) sudah tutup buku; transfer bagi hasil unit "
+                    f"harus dilakukan sebelum BUMDes tutup buku. ({exc.detail})",
                 ) from exc
             unit_id = await session.scalar(select(UnitUsaha.id).where(UnitUsaha.code == result["group"]))
             await assert_can_mutate_period(session, admin, when, unit_id)

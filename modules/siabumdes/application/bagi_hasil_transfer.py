@@ -215,7 +215,7 @@ async def run_bagi_hasil_transfer(
     unit: Optional[UnitUsaha] = None
     if group_code == "BUMDES":
         if month not in BUMDES_TRANSFER_MONTHS:
-            raise ValueError("Transfer bagi hasil BUMDES hanya untuk periode Maret, Juni, September, Desember")
+            raise ValueError("Transfer bagi hasil BUMDes hanya untuk periode Maret, Juni, September, Desember")
     else:
         unit = (await session.execute(select(UnitUsaha).where(UnitUsaha.code == group_code))).scalar_one_or_none()
         if not unit:

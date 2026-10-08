@@ -115,7 +115,7 @@ def validate_bagi_hasil_fields(fields: dict) -> None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(
-                    "Total proporsi bagi hasil BUMDES (Pengurus + Penasihat + Pengawas + "
+                    "Total proporsi bagi hasil BUMDes (Pengurus + Penasihat + Pengawas + "
                     f"Dana Sosial + PADes + Penguatan Modal) harus 100%, saat ini {total}%"
                 ),
             )
@@ -124,5 +124,5 @@ def validate_bagi_hasil_fields(fields: dict) -> None:
         if abs(total - _HUNDRED) > _TOLERANCE:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Total proporsi bagi hasil Unit Usaha (Pengelola + BUMDES) harus 100%, saat ini {total}%",
+                detail=f"Total proporsi bagi hasil Unit Usaha (Pengelola + BUMDes) harus 100%, saat ini {total}%",
             )

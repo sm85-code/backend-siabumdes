@@ -352,16 +352,16 @@ class ReportingService:
                 "Pengakuan pendapatan menggunakan basis akrual.",
                 (
                     "Berdasarkan kepatuhan terhadap Kepmendesa No. 136 Tahun 2022, "
-                    "Laporan Perubahan Ekuitas (LPE) hanya menyajikan mutasi modal murni Kantor Pusat BUMDES. "
+                    "Laporan Perubahan Ekuitas (LPE) hanya menyajikan mutasi modal murni Kantor Pusat BUMDes. "
                     "Rincian bagi hasil untuk pihak eksternal non-Penyertaan Modal Desa dilarang disajikan di dalam LPE. "
                     "Guna menyelaraskan regulasi tersebut dengan AD/ART BUM Desa mengenai kewajiban alokasi Bagi Hasil Usaha (BHU), "
                     "manajemen menerapkan kebijakan penutupan pembukuan bulanan (Accrual Monthly Closing Entries) sebagai berikut:"
                 ),
                 (
-                    f"a. Kantor Pusat BUM Desa (BUMDES): Setiap akhir bulan berjalan, Laba Bersih Operasional dialokasikan "
+                    f"a. Kantor Pusat BUM Desa (BUMDes): Setiap akhir bulan berjalan, Laba Bersih Operasional dialokasikan "
                     f"dengan memindahkan porsi {pct(bh.utang_bh_bumdes_pct)}% ke pos Kewajiban Lancar pada akun 'utang_bagi_hasil_bumdes' "
                     f"(untuk Pengurus {pct(bh.pengurus)}%, Penasihat {pct(bh.penasihat)}%, Pengawas {pct(bh.pengawas)}%, dan Dana Sosial {pct(bh.dana_sosial)}%). "
-                    "Proporsi pembagian bagi hasil BUMDES pusat serta jangka waktu pencairannya secara berkala (per 3 bulan) "
+                    "Proporsi pembagian bagi hasil BUMDes pusat serta jangka waktu pencairannya secara berkala (per 3 bulan) "
                     "telah diatur secara mengikat dan sah di dalam AD/ART BUM Desa kami. "
                     f"Sisa porsi laba sebesar {pct(bh.ekuitas_pct)}% diakui secara instan sebagai penambah komponen Ekuitas pada akun "
                     f"'bagi_hasil_desa' (PADes {pct(bh.pades)}%) dan 'laba_dicadangkan' (Penguatan Modal {pct(bh.modal_bumdes)}%). "

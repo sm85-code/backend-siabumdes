@@ -502,11 +502,13 @@ class ReportingService:
         series = [monthly[k] for k in sorted(monthly)]
         if not start and not end:
             series = series[-6:]
+        bh = await get_bagi_hasil_config(self.session)
         unit_summaries = []
         for unit in await self._units():
             if unit_usaha_id and unit.id != unit_usaha_id:
                 continue
             u_lr = await self.laba_rugi(start or date(2000, 1, 1), end or date.today(), unit.id)
+            u_nr = await self.neraca(end or date.today(), unit.id)
             unit_summaries.append({
                 "id": unit.id,
                 "code": unit.code,
@@ -514,6 +516,12 @@ class ReportingService:
                 "pendapatan": u_lr["total_pendapatan"],
                 "beban": u_lr["total_beban"],
                 "laba": u_lr["laba_bersih"],
+                "total_aset": u_nr["total_aset"],
+                "total_kewajiban": u_nr["total_kewajiban"],
+                "total_ekuitas": u_nr["total_ekuitas"],
+                "modal_bumdes": u_nr["modal_desa"],
+                "share_pengelola": round(u_lr["laba_bersih"] * float(bh.unit_pengelola) / 100),
+                "share_bumdes": round(u_lr["laba_bersih"] * float(bh.unit_bumdes) / 100),
             })
 
         # Posisi keuangan (Neraca) per akhir periode -- dasar KPI rasio
@@ -524,7 +532,6 @@ class ReportingService:
         nr = await self.neraca(end or date.today(), unit_usaha_id)
         bagi_hasil_bumdes = []
         if not unit_usaha_id:
-            bh = await get_bagi_hasil_config(self.session)
             for key, label, percentage in (
                 ("pades", "PADes", bh.pades),
                 ("modal_bumdes", "Modal BUMDes", bh.modal_bumdes),
@@ -551,4 +558,13 @@ class ReportingService:
             "kas_bank": nr["kas_bank"],
             "modal_desa": nr["modal_desa"],
             "bagi_hasil_bumdes": bagi_hasil_bumdes,
+            "unit_share_persen": {"pengelola": float(bh.unit_pengelola), "bumdes": float(bh.unit_bumdes)},
+            "bagi_hasil_unit": [
+                {"key": key, "label": label, "persen": float(pct),
+                 "amount": round(lr["laba_bersih"] * float(pct) / 100)}
+                for key, label, pct in (
+                    ("pengelola", "Pengelola", bh.unit_pengelola),
+                    ("bumdes", "BUMDes", bh.unit_bumdes),
+                )
+            ] if unit_usaha_id else [],
         }

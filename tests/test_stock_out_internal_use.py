@@ -38,6 +38,8 @@ from modules.siabumdes.infrastructure.models import (  # noqa: E402
 )
 from modules.siabumdes.inventory.application.services import InventoryService  # noqa: E402
 from modules.siabumdes.inventory.infrastructure.models import (  # noqa: E402
+    CommercialDocument,
+    DocumentSource,
     Customer,
     Product,
     Purchase,
@@ -66,6 +68,8 @@ _TABLES = [
     Customer.__table__,
     Sale.__table__,
     SalePayment.__table__,
+    CommercialDocument.__table__,
+    DocumentSource.__table__,
 ]
 
 

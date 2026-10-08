@@ -8,6 +8,7 @@ from typing import Any, Optional
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from modules.siabumdes.inventory.application.descriptions import inventory_description
 from modules.siabumdes.inventory.application.coa import validate_coa_codes
 from modules.siabumdes.inventory.infrastructure.models import (
     Product,
@@ -82,7 +83,7 @@ class InventoryAdjustReportsMixin:
             journal_reference = f"stock-adj:{adj.id}"
             reduction_reference = f"stock-adj:{adj.id}:reduce"
             loss_reference = f"stock-adj:{adj.id}:loss"
-            desc_base = f"Penyesuaian stok {product.sku} delta={quantity_delta} ({reason_clean})"
+            desc_base = inventory_description("Koreksi Stok" if reason_clean == "koreksi" else "Penyesuaian Stok", product=product.name, note=f"Berkurang {abs(quantity_delta)} · {reason_clean}")
             # 1) Pengurangan fisik nilai persediaan: Dr Penyesuaian Nilai Persediaan / Cr Persediaan
             await self.finance.record_inventory_journal(
                 movement_date=adjustment_date,
@@ -90,7 +91,7 @@ class InventoryAdjustReportsMixin:
                 amount=amount,
                 debit_account_code=PENYESUAIAN_NILAI_PERSEDIAAN_ACCOUNT_CODE,
                 credit_account_code=PERSEDIAAN_ACCOUNT_CODE,
-                description=f"{desc_base} - pengurangan fisik",
+                description=f"{desc_base} · Pengurangan Persediaan",
                 reference=reduction_reference,
                 created_by=created_by,
                 transaction_type="inventory_adjustment_reduction",
@@ -102,7 +103,7 @@ class InventoryAdjustReportsMixin:
                 amount=amount,
                 debit_account_code=BEBAN_KERUGIAN_BARANG_ACCOUNT_CODE,
                 credit_account_code=PENYESUAIAN_NILAI_PERSEDIAAN_ACCOUNT_CODE,
-                description=f"{desc_base} - pengakuan beban kerugian",
+                description=f"{desc_base} · Beban Kerugian",
                 reference=loss_reference,
                 created_by=created_by,
                 transaction_type="inventory_adjustment_loss",
@@ -111,7 +112,7 @@ class InventoryAdjustReportsMixin:
         elif amount > 0:
             uid = unit_usaha_id or product.unit_usaha_id
             journal_reference = f"stock-adj:{adj.id}"
-            desc = f"Penyesuaian stok gain {product.sku} delta={quantity_delta} ({reason_clean})"
+            desc = inventory_description("Koreksi Stok" if reason_clean == "koreksi" else "Penyesuaian Stok", product=product.name, note=f"Bertambah {quantity_delta} · {reason_clean}")
             await self.finance.record_inventory_journal(
                 movement_date=adjustment_date,
                 unit_usaha_id=uid,

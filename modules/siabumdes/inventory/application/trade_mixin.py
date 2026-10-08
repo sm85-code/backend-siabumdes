@@ -8,9 +8,12 @@ from typing import Any, Optional
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from modules.siabumdes.inventory.application.descriptions import inventory_description
 from modules.siabumdes.inventory.application.coa import validate_coa_codes
 from modules.siabumdes.inventory.infrastructure.models import (
     Customer,
+    Product,
+    StockCard,
     Purchase,
     PurchasePayment,
     Sale,
@@ -159,7 +162,11 @@ class InventoryTradeMixin:
         purchase = await self.session.scalar(
             select(Purchase)
             .options(selectinload(Purchase.vendor), selectinload(Purchase.payments))
-            .where(Purchase.id == purchase_id)
+            .join(StockCard, Purchase.stock_card_id == StockCard.id)
+            .join(Product, StockCard.product_id == Product.id)
+            .where(Purchase.id == purchase_id, Product.unit_usaha_id == unit_usaha_id)
+            .with_for_update(of=Purchase)
+            .execution_options(populate_existing=True)
         )
         if not purchase:
             raise ValueError("transaksi pembelian tidak ditemukan")
@@ -185,7 +192,7 @@ class InventoryTradeMixin:
             amount=amount,
             debit_account_code=debit_account_code,
             credit_account_code=credit_account_code,
-            description=f"Pelunasan utang usaha - invoice {purchase.invoice_number}",
+            description=inventory_description("Pembayaran Pemasok", partner=purchase.vendor.name, invoice=purchase.invoice_number),
             reference=payment.reference,
             created_by=created_by,
             transaction_type="purchase_payment",
@@ -220,7 +227,11 @@ class InventoryTradeMixin:
         sale = await self.session.scalar(
             select(Sale)
             .options(selectinload(Sale.customer), selectinload(Sale.payments))
-            .where(Sale.id == sale_id)
+            .join(StockCard, Sale.stock_card_id == StockCard.id)
+            .join(Product, StockCard.product_id == Product.id)
+            .where(Sale.id == sale_id, Product.unit_usaha_id == unit_usaha_id)
+            .with_for_update(of=Sale)
+            .execution_options(populate_existing=True)
         )
         if not sale:
             raise ValueError("transaksi penjualan tidak ditemukan")
@@ -246,7 +257,7 @@ class InventoryTradeMixin:
             amount=amount,
             debit_account_code=debit_account_code,
             credit_account_code=credit_account_code,
-            description=f"Pelunasan piutang usaha - invoice {sale.invoice_number}",
+            description=inventory_description("Pembayaran Pelanggan", partner=sale.customer.name, invoice=sale.invoice_number),
             reference=payment.reference,
             created_by=created_by,
             transaction_type="sale_payment",

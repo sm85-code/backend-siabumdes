@@ -80,7 +80,7 @@ async def test_unit_dashboard_does_not_expose_bumdes_shares(monkeypatch):
 async def test_unit_tables_use_as_of_balances_and_configured_shares(monkeypatch):
     class UnitsFixture(ReportFixture):
         async def _units(self):
-            return [SimpleNamespace(id='unit1', code='UU01', name='Toko')]
+            return [SimpleNamespace(id='unit1', code='UU01', name='Toko', active=False)]
 
         async def neraca(self, as_of, unit_usaha_id=None):
             assert as_of == date(2026, 12, 31)
@@ -93,6 +93,7 @@ async def test_unit_tables_use_as_of_balances_and_configured_shares(monkeypatch)
     monkeypatch.setattr(reporting, 'get_bagi_hasil_config', config)
     result = await UnitsFixture(None).dashboard(date(2026, 1, 1), date(2026, 12, 31), 'month', None, True)
     row = stringify_money_fields(result)['unit_summaries'][0]
+    assert row['active'] is False
     assert row['modal_bumdes'] == '7000000.00'
     assert row['total_aset'] == '9000000.00'
     assert row['share_pengelola'] == '250000.00'

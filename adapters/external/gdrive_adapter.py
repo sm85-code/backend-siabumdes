@@ -157,7 +157,7 @@ def _delete_sync(file_id: str) -> None:
     try:
         service.files().delete(fileId=file_id, supportsAllDrives=True).execute()
     except HttpError as exc:
-        if getattr(exc, "status_code", None) == 404 or "404" in str(exc):
+        if getattr(exc.resp, "status", None) == 404:
             return
         raise
 
@@ -167,8 +167,10 @@ def _exists_sync(file_id: str) -> bool:
     try:
         service.files().get(fileId=file_id, fields="id", supportsAllDrives=True).execute()
         return True
-    except HttpError:
-        return False
+    except HttpError as exc:
+        if getattr(exc.resp, "status", None) == 404:
+            return False
+        raise
 
 
 def _set_public_sync(file_id: str) -> None:

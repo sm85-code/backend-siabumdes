@@ -224,4 +224,6 @@ class YieldPayment(Base):
     year: Mapped[int] = mapped_column(nullable=False)
     month: Mapped[int] = mapped_column(nullable=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    transaction_id: Mapped[Optional[str]] = mapped_column(String(64), ForeignKey("transactions.id", ondelete="RESTRICT"), nullable=True)
+    transaction_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     automatic: Mapped[bool] = mapped_column(Boolean, nullable=False)

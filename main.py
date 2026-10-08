@@ -14,6 +14,7 @@ from sqlalchemy import text
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from modules.siabumdes.adapters.api.v1 import siabumdes_router, uu05_inventory_router
+from modules.siabumdes.adapters.api.v1.inventory_documents_router import router as inventory_documents_router
 from modules.siabumdes.adapters.api.v1.admin_control_router import router as admin_control_router
 from modules.siabumdes.adapters.api.v1.audit_log_router import router as audit_log_router
 from modules.siabumdes.adapters.api.v1.auth_router import router as auth_router
@@ -84,6 +85,7 @@ app.include_router(transaction_router)
 app.include_router(reports_router)
 app.include_router(io_router)
 app.include_router(siabumdes_router.router)
+app.include_router(inventory_documents_router)
 app.include_router(uu05_inventory_router.router)
 
 

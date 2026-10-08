@@ -17,6 +17,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from shared.database import Base
@@ -254,3 +255,28 @@ class SalePayment(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     sale: Mapped["Sale"] = relationship(back_populates="payments")
+
+
+class CommercialDocument(Base):
+    """Issued immutable document; issuing never posts a stock/finance movement."""
+    __tablename__ = 'inventory_documents'
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    number: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default='issued')
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    unit_usaha_id: Mapped[str] = mapped_column(ForeignKey('unit_usaha.id', ondelete='RESTRICT'), index=True)
+    partner_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    issued_date: Mapped[date] = mapped_column(Date, nullable=False)
+    snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class DocumentSource(Base):
+    """One sale/purchase can belong to only one issued document of its kind."""
+    __tablename__ = 'inventory_document_sources'
+    __table_args__ = (UniqueConstraint('kind', 'source_id', name='uq_inventory_document_source'),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    document_id: Mapped[str] = mapped_column(ForeignKey('inventory_documents.id', ondelete='RESTRICT'), index=True)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_id: Mapped[str] = mapped_column(String(36), nullable=False)

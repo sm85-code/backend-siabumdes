@@ -8,8 +8,11 @@ from typing import Any, Optional
 from sqlalchemy import select, update
 from sqlalchemy.orm import selectinload
 
+from modules.siabumdes.inventory.application.descriptions import inventory_description
 from modules.siabumdes.inventory.application.coa import validate_coa_codes
 from modules.siabumdes.inventory.infrastructure.models import (
+    CommercialDocument,
+    DocumentSource,
     Product,
     Purchase,
     Sale,
@@ -107,7 +110,7 @@ class InventoryStockMixin:
             amount=total,
             debit_account_code=debit_account_code,
             credit_account_code=credit_account_code,
-            description=f"Stok masuk {product.sku} x{quantity}",
+            description=inventory_description("Pembelian Stok", partner=vendor.name, invoice=invoice_number, product=product.name, quantity=quantity),
             reference=card.reference,
             created_by=created_by,
             transaction_type="inventory_purchase",
@@ -181,7 +184,7 @@ class InventoryStockMixin:
             amount=total,
             debit_account_code=debit_account_code,
             credit_account_code=credit_account_code,
-            description=f"Stok keluar / COGS {product.sku} x{quantity}",
+            description=inventory_description("HPP Penjualan", invoice=invoice_number, product=product.name, quantity=quantity),
             reference=card.reference,
             created_by=created_by,
             transaction_type="inventory_cogs",
@@ -197,7 +200,7 @@ class InventoryStockMixin:
                 amount=revenue_total,
                 debit_account_code=revenue_debit_account_code,
                 credit_account_code=revenue_credit_account_code,
-                description=f"Penjualan {product.sku} x{quantity}",
+                description=inventory_description("Penjualan", partner=customer.name, invoice=invoice_number, product=product.name, quantity=quantity),
                 reference=revenue_reference,
                 created_by=created_by,
                 transaction_type="inventory_sale_revenue",
@@ -261,9 +264,7 @@ class InventoryStockMixin:
         await self.session.flush()
         card.reference = f"stock-out-internal:{card.id}"
         await validate_coa_codes(self.session, debit_account_code, credit_account_code)
-        desc = f"Pemakaian internal {product.sku} x{quantity}"
-        if note.strip():
-            desc = f"{desc} ({note.strip()})"
+        desc = inventory_description("Pemakaian Internal", product=product.name, quantity=quantity, note=note)
         await self.finance.record_inventory_journal(
             movement_date=movement_date,
             unit_usaha_id=unit_usaha_id,
@@ -285,9 +286,17 @@ class InventoryStockMixin:
         Soft-cancel left cancelled rows (and confusing \"jurnal dibatalkan\") in the UI;
         callers expect cancel to leave the ledger clean.
         """
-        card = await self.session.get(StockCard, stock_card_id)
+        card = await self.session.get(StockCard, stock_card_id, with_for_update=True)
         if not card:
             return
+        documented = await self.session.scalar(
+            select(CommercialDocument.number).join(DocumentSource, DocumentSource.document_id == CommercialDocument.id)
+            .where(CommercialDocument.status == 'issued', DocumentSource.source_id.in_(
+                select(Purchase.id).where(Purchase.stock_card_id == card.id).union(select(Sale.id).where(Sale.stock_card_id == card.id))
+            )).limit(1)
+        )
+        if documented:
+            raise ValueError(f'Batalkan dokumen {documented} terlebih dahulu sebelum membatalkan transaksi stok')
         if card.finance_status == "cancelled":
             # Leftover soft-cancelled row from older builds — just purge.
             await self.session.delete(card)

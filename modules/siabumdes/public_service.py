@@ -88,10 +88,12 @@ class SiabumdesPublicService:
     async def cancel_inventory_journal(self, reference: str) -> int:
         """Remove finance postings by inventory reference. Returns rows deleted."""
         tx = await self.session.scalar(
-            select(Transaction).where(Transaction.reference == reference)
+            select(Transaction).where(Transaction.reference == reference).with_for_update()
         )
         if not tx:
             return 0
+        from modules.siabumdes.application.transaction_proofs import delete_transaction_proofs
+        await delete_transaction_proofs(list(tx.proofs or []))
         # Delete journal entry (+ items via ORM cascade) before the transaction.
         # ORM delete of Transaction alone would SET NULL journal_entries.transaction_id,
         # which violates NOT NULL and caused HTTP 500 on cancel-movement.

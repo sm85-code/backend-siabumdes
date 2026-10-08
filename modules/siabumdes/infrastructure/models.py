@@ -197,3 +197,16 @@ class JournalItem(Base):
 
     journal_entry: Mapped["JournalEntry"] = relationship(back_populates="items")
     account: Mapped["Account"] = relationship(back_populates="journal_items")
+
+
+class YieldPartner(Base):
+    """Standalone UU04 capital register; does not post financial journals."""
+    __tablename__ = "yield_partners"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=_uuid)
+    unit_usaha_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("unit_usaha.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    capital: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

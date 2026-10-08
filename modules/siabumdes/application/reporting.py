@@ -516,6 +516,7 @@ class ReportingService:
                 "pendapatan": u_lr["total_pendapatan"],
                 "beban": u_lr["total_beban"],
                 "laba": u_lr["laba_bersih"],
+                "active": unit.active,
                 "total_aset": u_nr["total_aset"],
                 "total_kewajiban": u_nr["total_kewajiban"],
                 "total_ekuitas": u_nr["total_ekuitas"],

@@ -88,6 +88,8 @@ async def seed_if_needed() -> None:
             await _seed_taxonomy(session)
             await _seed_coa(session, units)
             await _seed_users(session, units)
+            from modules.siabumdes.application.yield_transactions import ensure_yield_type
+            await ensure_yield_type(session)
             existing = await session.get(SystemControl, "default")
             if not existing:
                 session.add(SystemControl(id="default", recording_locked=False))

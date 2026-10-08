@@ -32,6 +32,8 @@ _WIDEN = [
 # (dulu hardcode di closing.py/reporting.py, sekarang diedit lewat menu Profil
 # BUMDES) butuh ADD COLUMN eksplisit di sini.
 _ADD_COLUMNS = [
+    ("yield_payments", "transaction_id", "VARCHAR(64) REFERENCES transactions(id) ON DELETE RESTRICT"),
+    ("yield_payments", "transaction_date", "DATE"),
     ("org_profiles", "share_pengurus", "NUMERIC(5,2) NOT NULL DEFAULT 35"),
     ("org_profiles", "share_penasihat", "NUMERIC(5,2) NOT NULL DEFAULT 7"),
     ("org_profiles", "share_pengawas", "NUMERIC(5,2) NOT NULL DEFAULT 5"),

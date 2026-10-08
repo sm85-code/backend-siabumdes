@@ -40,8 +40,8 @@ from adapters.external.gdrive_adapter import (
 )
 from modules.siabumdes.identity.infrastructure.models import User
 from modules.siabumdes.application.bagi_hasil_transfer import is_bh_reference
-from modules.siabumdes.application.services import FinanceService
-from modules.siabumdes.infrastructure.models import Account, JournalEntry, Transaction
+from modules.siabumdes.application.transaction_journal import sync_transaction_journal as _sync_journal
+from modules.siabumdes.infrastructure.models import JournalEntry, Transaction
 from shared.database import get_db
 
 router = APIRouter(prefix="/api", tags=["transactions"])
@@ -135,16 +135,10 @@ def _tx_out(row: Transaction) -> dict:
     }
 
 
-async def _account(session: AsyncSession, code: str, group: str) -> Account:
-    row = (
-        await session.execute(select(Account).where(Account.code == code, Account.group_code == group))
-    ).scalar_one_or_none()
-    if not row:
-        raise HTTPException(status_code=400, detail=f"Akun {code} tidak ada di kelompok {group}")
-    return row
-
 
 def _assert_not_bagi_hasil(reference: Optional[str]) -> None:
+    if reference and reference.startswith("YIELD:"):
+        raise HTTPException(400, "Transaksi Imbal Hasil otomatis hanya dapat diubah/dihapus melalui menu Imbal Hasil")
     if is_bh_reference(reference):
         raise HTTPException(
             status_code=400,
@@ -153,27 +147,6 @@ def _assert_not_bagi_hasil(reference: Optional[str]) -> None:
         )
 
 
-async def _sync_journal(session: AsyncSession, tx: Transaction, group: str) -> None:
-    debit = await _account(session, tx.debit_account_code, group)
-    credit = await _account(session, tx.credit_account_code, group)
-    # Query explicitly instead of touching tx.journal_entry: for a just-flushed
-    # (now-persistent) Transaction that relationship isn't guaranteed to be
-    # loaded, and a plain attribute access would trigger a lazy load outside
-    # an awaited context, raising MissingGreenlet under AsyncSession.
-    existing_entry = await session.scalar(
-        select(JournalEntry).where(JournalEntry.transaction_id == tx.id)
-    )
-    if existing_entry:
-        await session.delete(existing_entry)
-        await session.flush()
-    await FinanceService(session).create_journal_entry(
-        transaction_id=tx.id,
-        entry_date=tx.date,
-        memo=tx.description,
-        debit_account_id=debit.id,
-        credit_account_id=credit.id,
-        amount=tx.amount,
-    )
 
 
 @router.get("/transactions")

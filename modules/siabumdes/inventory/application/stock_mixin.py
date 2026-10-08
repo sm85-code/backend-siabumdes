@@ -286,7 +286,7 @@ class InventoryStockMixin:
         Soft-cancel left cancelled rows (and confusing \"jurnal dibatalkan\") in the UI;
         callers expect cancel to leave the ledger clean.
         """
-        card = await self.session.get(StockCard, stock_card_id)
+        card = await self.session.get(StockCard, stock_card_id, with_for_update=True)
         if not card:
             return
         documented = await self.session.scalar(

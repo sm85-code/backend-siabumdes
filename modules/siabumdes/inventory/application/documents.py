@@ -28,7 +28,7 @@ def balances(row):
     return total, paid, max(Decimal(0), total - paid)
 
 
-async def trade_rows(session, kind, unit_id, partner_id=None, start=None, end=None):
+async def trade_rows(session, kind, unit_id, partner_id=None, start=None, end=None, lock=False):
     model, _, partner_field = KINDS[kind]
     stmt = (
         select(model, StockCard, Product)
@@ -38,6 +38,8 @@ async def trade_rows(session, kind, unit_id, partner_id=None, start=None, end=No
         .options(selectinload(model.payments))
         .order_by(StockCard.movement_date, model.id)
     )
+    if lock:
+        stmt = stmt.with_for_update(of=StockCard)
     if partner_id:
         stmt = stmt.where(getattr(model, partner_field) == partner_id)
     if start:
@@ -47,7 +49,7 @@ async def trade_rows(session, kind, unit_id, partner_id=None, start=None, end=No
     return (await session.execute(stmt)).all()
 
 
-async def sources(session, kind, unit_id, partner_id=None, start=None, end=None):
+async def sources(session, kind, unit_id, partner_id=None, start=None, end=None, lock=False):
     used = set(
         (
             await session.scalars(
@@ -58,7 +60,7 @@ async def sources(session, kind, unit_id, partner_id=None, start=None, end=None)
         ).all()
     )
     result = []
-    for row, card, product in await trade_rows(session, kind, unit_id, partner_id, start, end):
+    for row, card, product in await trade_rows(session, kind, unit_id, partner_id, start, end, lock=lock):
         total, paid, outstanding = balances(row)
         result.append(
             {
@@ -84,7 +86,7 @@ async def sources(session, kind, unit_id, partner_id=None, start=None, end=None)
     return result
 
 
-async def build_snapshot(session, body, unit, branding):
+async def build_snapshot(session, body, unit, branding, lock_sources=False):
     partner_model = Customer if body.kind == "invoice" else Vendor
     partner = await session.get(partner_model, body.partner_id)
     if not partner or partner.unit_usaha_id != unit.id:
@@ -115,7 +117,9 @@ async def build_snapshot(session, body, unit, branding):
     else:
         available = {
             r["id"]: r
-            for r in await sources(session, body.kind, unit.id, partner.id, body.period_start, body.period_end)
+            for r in await sources(
+                session, body.kind, unit.id, partner.id, body.period_start, body.period_end, lock=lock_sources
+            )
         }
         if not body.source_ids or len(set(body.source_ids)) != len(body.source_ids):
             raise HTTPException(422, "Pilih transaksi sumber yang berbeda")
@@ -175,7 +179,7 @@ async def build_snapshot(session, body, unit, branding):
 
 async def issue_document(session, body, unit, branding, actor):
     # Unit lock serializes issuance and avoids races over the same source rows.
-    snapshot = await build_snapshot(session, body, unit, branding)
+    snapshot = await build_snapshot(session, body, unit, branding, lock_sources=True)
     doc_id = str(uuid4())
     prefix = {"invoice": "INV", "po": "PO", "purchase_statement": "REKAP"}[body.kind]
     count = await session.scalar(

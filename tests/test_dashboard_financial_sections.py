@@ -65,10 +65,35 @@ async def test_dashboard_modal_balance_and_configured_allocation(monkeypatch, pa
 
 @pytest.mark.asyncio
 async def test_unit_dashboard_does_not_expose_bumdes_shares(monkeypatch):
-    async def forbidden(session):
-        raise AssertionError('Scoped unit dashboard must not fetch central allocation')
+    async def config(session):
+        return BagiHasilConfig(*map(Decimal, (35, 7, 5, 5, 30, 18, 25, 75)))
 
-    monkeypatch.setattr(reporting, 'get_bagi_hasil_config', forbidden)
+    monkeypatch.setattr(reporting, 'get_bagi_hasil_config', config)
     result = await ReportFixture(None).dashboard(date(2026, 1, 1), date(2026, 12, 31), 'month', 'unit1', False)
     assert result['bagi_hasil_bumdes'] == []
     assert result['modal_desa'] == 0
+    assert [r['amount'] for r in result['bagi_hasil_unit']] == [250000, 750000]
+    assert result['unit_summaries'] == []
+
+
+@pytest.mark.asyncio
+async def test_unit_tables_use_as_of_balances_and_configured_shares(monkeypatch):
+    class UnitsFixture(ReportFixture):
+        async def _units(self):
+            return [SimpleNamespace(id='unit1', code='UU01', name='Toko')]
+
+        async def neraca(self, as_of, unit_usaha_id=None):
+            assert as_of == date(2026, 12, 31)
+            return dict(total_aset=9000000, total_kewajiban=1000000,
+                        total_ekuitas=8000000, modal_desa=7000000, kas_bank=0)
+
+    async def config(session):
+        return BagiHasilConfig(*map(Decimal, (35, 7, 5, 5, 30, 18, 25, 75)))
+
+    monkeypatch.setattr(reporting, 'get_bagi_hasil_config', config)
+    result = await UnitsFixture(None).dashboard(date(2026, 1, 1), date(2026, 12, 31), 'month', None, True)
+    row = stringify_money_fields(result)['unit_summaries'][0]
+    assert row['modal_bumdes'] == '7000000.00'
+    assert row['total_aset'] == '9000000.00'
+    assert row['share_pengelola'] == '250000.00'
+    assert row['share_bumdes'] == '750000.00'

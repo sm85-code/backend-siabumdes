@@ -37,6 +37,7 @@ MONEY_KEYS: frozenset[str] = frozenset(
         "total_debit",
         "total_credit",
         "kas_bank",
+        "modal_desa",
         "pades_estimasi",
         "laba_bersih_asli",
         "laba_periode",

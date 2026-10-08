@@ -206,6 +206,11 @@ class ReportingService:
             "total_ekuitas": total_eku,
             "total_pasiva": total_pasiva,
             "kas_bank": kas_bank,
+            "modal_desa": sum(
+                _f(bal.get(code, Decimal("0")))
+                for code, acc in accounts.items()
+                if acc.subcategory == SUB_MODAL_DESA
+            ),
             "balanced": abs(total_aset - total_pasiva) < 0.5,
             "group": group,
         }
@@ -517,6 +522,21 @@ class ReportingService:
         # unit_usaha_id diisi, kalau tidak selalu BUMDES pusat (unit_usaha_id
         # None -> neraca() resolve ke grup "BUMDES").
         nr = await self.neraca(end or date.today(), unit_usaha_id)
+        bagi_hasil_bumdes = []
+        if not unit_usaha_id:
+            bh = await get_bagi_hasil_config(self.session)
+            for key, label, percentage in (
+                ("pades", "PADes", bh.pades),
+                ("modal_bumdes", "Modal BUMDes", bh.modal_bumdes),
+                ("penasihat", "Penasihat", bh.penasihat),
+                ("pengawas", "Pengawas", bh.pengawas),
+                ("pengurus", "Pengurus", bh.pengurus),
+                ("dana_sosial", "Dana Sosial", bh.dana_sosial),
+            ):
+                bagi_hasil_bumdes.append({
+                    "key": key, "label": label, "persen": float(percentage),
+                    "amount": round(lr["laba_bersih"] * float(percentage) / 100),
+                })
 
         return {
             "total_pendapatan": lr["total_pendapatan"],
@@ -529,4 +549,6 @@ class ReportingService:
             "total_kewajiban": nr["total_kewajiban"],
             "total_ekuitas": nr["total_ekuitas"],
             "kas_bank": nr["kas_bank"],
+            "modal_desa": nr["modal_desa"],
+            "bagi_hasil_bumdes": bagi_hasil_bumdes,
         }

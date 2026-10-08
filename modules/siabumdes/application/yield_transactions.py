@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
 from modules.siabumdes.adapters.api.scope import assert_can_mutate_period, assert_not_readonly
+from modules.siabumdes.application.transaction_proofs import delete_transaction_proofs
 from modules.siabumdes.application.transaction_journal import sync_transaction_journal
 from modules.siabumdes.infrastructure.models import Account, JournalEntry, Transaction, TransactionType, YieldPartner, YieldPayment
 
@@ -37,7 +38,7 @@ async def save_linked_payment(session, actor, unit, partner, body, amount):
     if amount <= 0:
         raise HTTPException(422, 'Nominal pembayaran harus lebih dari nol untuk membuat transaksi')
     payment = await find_payment(session, partner, body.year, body.month)
-    tx = await session.get(Transaction, payment.transaction_id) if payment and payment.transaction_id else None
+    tx = await session.get(Transaction, payment.transaction_id, with_for_update=True) if payment and payment.transaction_id else None
     if payment and payment.transaction_id and not tx:
         raise HTTPException(409, 'Transaksi terkait tidak ditemukan; hubungi admin')
     if tx:
@@ -70,10 +71,12 @@ async def delete_linked_payment(session, actor, unit, partner, body):
     if not payment:
         raise HTTPException(404, 'Belum ada pembayaran untuk bulan yang dipilih')
     assert_not_readonly(actor)
-    tx = await session.get(Transaction, payment.transaction_id) if payment.transaction_id else None
+    tx = await session.get(Transaction, payment.transaction_id, with_for_update=True) if payment.transaction_id else None
     if payment.transaction_id and not tx:
         raise HTTPException(409, 'Transaksi terkait tidak ditemukan; hubungi admin')
     await assert_can_mutate_period(session, actor, tx.date if tx else (payment.transaction_date or body.transaction_date), unit.id)
+    if tx:
+        await delete_transaction_proofs(list(tx.proofs or []))
     await session.delete(payment)
     await session.flush()  # remove FK before deleting linked finance rows
     if tx:

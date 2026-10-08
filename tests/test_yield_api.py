@@ -50,7 +50,7 @@ def client(monkeypatch):
             if entity is YieldPayment:
                 return next((p for p in state.payments.values() if p.partner_id == params['partner_id_1'] and ('year_1' not in params or (p.year == params['year_1'] and p.month == params['month_1']))), None)
 
-        async def get(self, model, key):
+        async def get(self, model, key, **kwargs):
             if model is UnitUsaha:
                 return unit
             return state.finance.get(key) if model is Transaction else state.rows.get(key)
@@ -212,3 +212,67 @@ def test_manual_transaction_route_rejects_yield_reference():
         _assert_not_bagi_hasil('YIELD:partner:2026:01')
     assert caught.value.status_code == 400
     _assert_not_bagi_hasil('manual-reference')
+
+
+def test_linked_proofs_failure_preserves_finance_and_retry_cleans_files(client, monkeypatch):
+    from modules.siabumdes.application import transaction_proofs as proofs
+    http, state = client
+    pid = http.post('/api/imbal-hasil/mitra', json={'name': 'M', 'capital': '1000000'}).json()['id']
+    url = f'/api/imbal-hasil/mitra/{pid}/pembayaran'
+    body = {'year': 2026, 'month': 1, 'automatic': True}
+    http.put(url, json=body)
+    tx = next(iter(state.finance.values()))
+    tx.proofs = [{'file_id': 'first'}, {'file_id': 'second'}]
+    deleted = set()
+    fail = True
+
+    async def remove(fid):
+        assert state.finance and state.payments and state.journals
+        if fid == 'second' and fail:
+            raise RuntimeError('Drive unavailable')
+        deleted.add(fid)  # missing/already-deleted files are idempotent in adapter
+
+    monkeypatch.setattr(proofs, 'is_configured', lambda: True)
+    monkeypatch.setattr(proofs, 'delete_file_from_gdrive', remove)
+    # Edits retain the transaction and its optional proofs.
+    assert http.put(url, json={**body, 'automatic': False, 'amount': '12000'}).status_code == 200
+    assert len(tx.proofs) == 2
+    state.locked = True
+    assert http.request('DELETE', url, json=body).status_code == 403
+    assert not deleted
+    state.locked = False
+    assert http.request('DELETE', url, json=body).status_code == 502
+    assert deleted == {'first'}
+    assert state.finance and state.payments and state.journals and len(tx.proofs) == 2
+    fail = False
+    assert http.request('DELETE', url, json=body).status_code == 204
+    assert deleted == {'first', 'second'}
+    assert not state.finance and not state.payments and not state.journals
+
+
+def test_delete_proof_x_preserves_metadata_on_failure(client, monkeypatch):
+    from modules.siabumdes.application import transaction_proofs as proofs
+    from modules.siabumdes.adapters.api.v1 import transaction_router as tr
+    http, state = client
+    http.app.include_router(tr.router)
+    async def guard(*args):
+        pass
+    monkeypatch.setattr(tr, 'assert_can_mutate_period', guard)
+    pid = http.post('/api/imbal-hasil/mitra', json={'name': 'M', 'capital': '1000000'}).json()['id']
+    http.put(f'/api/imbal-hasil/mitra/{pid}/pembayaran', json={'year': 2026, 'month': 1, 'automatic': True})
+    tx = next(iter(state.finance.values()))
+    tx.proofs = [{'file_id': 'a'}, {'file_id': 'b'}]
+    url = f'/api/transactions/{tx.id}/proofs/a'
+    monkeypatch.setattr(proofs, 'is_configured', lambda: False)
+    assert http.delete(url).status_code == 503
+    assert len(tx.proofs) == 2
+    monkeypatch.setattr(proofs, 'is_configured', lambda: True)
+    async def remove(fid):
+        assert fid == 'a'
+    monkeypatch.setattr(proofs, 'delete_file_from_gdrive', remove)
+    state.user.role, state.user.unit_usaha_id = 'pengelola', 'u3'
+    assert http.delete(url).status_code == 403
+    state.user.role, state.user.unit_usaha_id = 'admin', None
+    assert http.delete(url).status_code == 200
+    assert tx.proofs == [{'file_id': 'b'}]
+    assert state.finance and state.payments and state.journals

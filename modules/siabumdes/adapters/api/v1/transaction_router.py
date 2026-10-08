@@ -31,7 +31,6 @@ from modules.siabumdes.adapters.api.scope import (
     unit_code_for,
 )
 from adapters.external.gdrive_adapter import (
-    delete_file_from_gdrive,
     gdrive_file_exists,
     is_configured,
     is_oauth_configured,
@@ -39,6 +38,7 @@ from adapters.external.gdrive_adapter import (
     upload_file_to_gdrive,
 )
 from modules.siabumdes.identity.infrastructure.models import User
+from modules.siabumdes.application.transaction_proofs import delete_transaction_proofs
 from modules.siabumdes.application.bagi_hasil_transfer import is_bh_reference
 from modules.siabumdes.application.transaction_journal import sync_transaction_journal as _sync_journal
 from modules.siabumdes.infrastructure.models import JournalEntry, Transaction
@@ -313,18 +313,12 @@ async def delete_transaction(
     user: User = Depends(require_roles(*TX_DELETE_ROLES)),
     session: AsyncSession = Depends(get_db),
 ):
-    tx = await session.get(Transaction, tx_id)
+    tx = await session.get(Transaction, tx_id, with_for_update=True)
     if not tx:
         return {"deleted": 0}
     _assert_not_bagi_hasil(tx.reference)
     await assert_can_mutate_period(session, user, tx.date, tx.unit_usaha_id)
-    for proof in list(tx.proofs or []):
-        fid = proof.get("file_id")
-        if fid and is_configured():
-            try:
-                await delete_file_from_gdrive(fid)
-            except Exception:
-                pass
+    await delete_transaction_proofs(list(tx.proofs or []))
     # Delete the journal entry (+ items via ORM cascade) explicitly first.
     # ORM delete of Transaction alone would try to SET NULL
     # journal_entries.transaction_id, which violates NOT NULL and 500s —
@@ -346,7 +340,7 @@ async def upload_proof(
     user: User = Depends(require_roles(*WRITE_ROLES)),
     session: AsyncSession = Depends(get_db),
 ):
-    tx = await session.get(Transaction, tx_id)
+    tx = await session.get(Transaction, tx_id, with_for_update=True)
     if not tx:
         raise HTTPException(status_code=404, detail="Transaksi tidak ditemukan")
     if not can_access_unit(user, tx.unit_usaha_id):
@@ -402,7 +396,7 @@ async def delete_proof(
     user: User = Depends(require_roles(*WRITE_ROLES)),
     session: AsyncSession = Depends(get_db),
 ):
-    tx = await session.get(Transaction, tx_id)
+    tx = await session.get(Transaction, tx_id, with_for_update=True)
     if not tx:
         raise HTTPException(status_code=404, detail="Transaksi tidak ditemukan")
     if not can_access_unit(user, tx.unit_usaha_id):
@@ -413,11 +407,7 @@ async def delete_proof(
     proofs = list(tx.proofs or [])
     if not any(p.get("file_id") == file_id for p in proofs):
         raise HTTPException(status_code=404, detail="File bukti tidak ditemukan")
-    if is_configured():
-        try:
-            await delete_file_from_gdrive(file_id)
-        except Exception:
-            pass
+    await delete_transaction_proofs([p for p in proofs if p.get("file_id") == file_id])
     tx.proofs = [p for p in proofs if p.get("file_id") != file_id]
     return {"ok": True, "proofs": tx.proofs}
 
@@ -429,7 +419,7 @@ async def verify_proofs(
 ):
     if not is_configured():
         return {"ok": True, "checked": 0, "removed": 0, "note": "Drive belum dikonfigurasi"}
-    stmt = select(Transaction)
+    stmt = select(Transaction).with_for_update()
     if is_pengelola(user):
         stmt = stmt.where(Transaction.unit_usaha_id == user.unit_usaha_id)
     checked = removed = 0
@@ -444,7 +434,11 @@ async def verify_proofs(
             if not fid:
                 continue
             checked += 1
-            if await gdrive_file_exists(fid):
+            try:
+                exists = await gdrive_file_exists(fid)
+            except Exception as exc:
+                raise HTTPException(502, "Gagal memeriksa bukti Google Drive; daftar bukti tetap tersimpan") from exc
+            if exists:
                 kept.append(item)
             else:
                 removed += 1

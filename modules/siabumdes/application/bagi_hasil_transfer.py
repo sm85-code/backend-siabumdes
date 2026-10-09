@@ -22,6 +22,7 @@ from typing import Any, Optional
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from modules.siabumdes.application.automatic_descriptions import automatic_description
 from modules.siabumdes.application.bagi_hasil import BagiHasilConfig, get_bagi_hasil_config
 from modules.siabumdes.application.closing import (
     SUB_UTANG_BH_BUMDES,
@@ -244,6 +245,7 @@ async def run_bagi_hasil_transfer(
     _, end = period_range(period)
     when = next_month_first(period)
     unit_id = unit.id if unit else None
+    entity_label = f"Unit {unit.name}" if unit else "BUMDes"
 
     utang = await _account_by_slug(
         session, group_code, SUB_UTANG_BH_BUMDES if group_code == "BUMDES" else SUB_UTANG_BH_UNIT
@@ -262,7 +264,7 @@ async def run_bagi_hasil_transfer(
             when=when,
             unit_id=unit_id,
             tx_type=f"bagi_hasil_{_slug(label)}",
-            desc=f"Pembayaran Bagi Hasil {label} {period}",
+            desc=automatic_description("Transfer Bagi Hasil", entity_label, period, detail=label, quarterly=group_code == "BUMDES"),
             amount=amount,
             debit=utang,
             credit=kas,
@@ -277,7 +279,7 @@ async def run_bagi_hasil_transfer(
                 when=when,
                 unit_id=None,
                 tx_type=TYPE_PUSAT_MASUK,
-                desc=f"Penerimaan Bagi Hasil {group_code} {period}",
+                desc=automatic_description("Penerimaan Bagi Hasil", "BUMDes", period, detail=entity_label),
                 when_override=end,
                 amount=amount,
                 debit=await _account_by_code(session, "BUMDES", KAS_PUSAT_CODE),

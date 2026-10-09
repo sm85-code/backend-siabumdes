@@ -9,6 +9,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from modules.siabumdes.identity.infrastructure.models import ClosedPeriod
+from modules.siabumdes.application.automatic_descriptions import automatic_description
 from modules.siabumdes.application.bagi_hasil import get_bagi_hasil_config
 from modules.siabumdes.money_json import money_str
 from modules.siabumdes.application.reporting import ReportingService
@@ -160,6 +161,7 @@ async def run_monthly_close(
     start, end = _period_range(period)
     unit = await _resolve_unit(session, group_code)
     unit_id = unit.id if unit else None
+    entity_label = f"Unit {unit.name}" if unit else "BUMDes"
     reference = _close_ref(period, group_code)
 
     ikhtisar = await _account_by_slug(session, group_code, SUB_IKHTISAR_LR)
@@ -194,7 +196,7 @@ async def run_monthly_close(
         reversed_balance = amt < 0
         acc_is_debit = income != reversed_balance
         debit, credit = (acc, ikhtisar) if acc_is_debit else (ikhtisar, acc)
-        label = "pendapatan" if income else "beban/HPP"
+        label = "Pendapatan" if income else "Beban/HPP"
         await _post_pair(
             session,
             end=end,
@@ -202,7 +204,7 @@ async def run_monthly_close(
             debit=debit,
             credit=credit,
             amount=abs(amt),
-            desc=f"Tutup {label} {acc.code} {period}",
+            desc=automatic_description("Tutup Buku", entity_label, period, detail=f"{label} — {acc.name} ({acc.code})"),
             reference=reference,
             actor_id=actor_id,
         )
@@ -231,7 +233,7 @@ async def run_monthly_close(
                     debit=ikhtisar,
                     credit=dest,
                     amount=portion,
-                    desc=f"Alokasi laba {period} ke {slug}",
+                    desc=automatic_description("Alokasi Laba", entity_label, period, detail=dest.name),
                     reference=reference,
                     actor_id=actor_id,
                 )
@@ -245,7 +247,7 @@ async def run_monthly_close(
                 debit=ikhtisar,
                 credit=dest,
                 amount=laba,
-                desc=f"Alokasi laba unit {period} ke utang bagi hasil",
+                desc=automatic_description("Alokasi Laba", entity_label, period, detail=dest.name),
                 reference=reference,
                 actor_id=actor_id,
             )
@@ -260,7 +262,7 @@ async def run_monthly_close(
             debit=saldo,
             credit=ikhtisar,
             amount=abs(laba),
-            desc=f"Transfer rugi {period} ke saldo laba/rugi",
+            desc=automatic_description("Pemindahan Rugi", entity_label, period, detail=saldo.name),
             reference=reference,
             actor_id=actor_id,
         )

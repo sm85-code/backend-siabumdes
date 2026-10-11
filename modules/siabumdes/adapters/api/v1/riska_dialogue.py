@@ -314,7 +314,7 @@ async def handle_chat(body, user, session, request=None):
             if table:
                 return table
         if action not in {'cash', 'profit'}:
-            return {'message': 'Saya bisa membantu saldo kas, laba rugi, barang masuk/keluar/rusak, dan pembayaran imbal hasil. Admin juga dapat meminta tutup buku, kunci periode, serta transfer bagi hasil.'}
+            return {'unrecognized': True, 'message': 'Saya ingin memastikan maksud Anda agar tidak salah membantu. Apakah Anda ingin memeriksa laporan, mencatat data baru, atau mengubah data yang sudah ada? Ceritakan kebutuhan Anda, ya; kita selesaikan satu per satu.'}
         if admin_user(user) and not selected and not pusat and re.search(r'\b(gabungan|konsolidasi|lintas)\b', message.lower()):
             selected, _ = await resolve_units(session, 'semua unit')
         return await comparative_report(session, selected, pusat or not selected, start, end, action == 'cash')

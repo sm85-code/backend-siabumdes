@@ -180,3 +180,21 @@ class RiskaAssignment(Base):
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class RiskaAiBudget(Base):
+    __tablename__ = 'riska_ai_budget'
+    day: Mapped[str] = mapped_column(String(10), primary_key=True)
+    calls: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    reserved_usd: Mapped[Decimal] = mapped_column(Numeric(12, 6), nullable=False, default=Decimal('0'))
+
+
+class RiskaAiCall(Base):
+    __tablename__ = 'riska_ai_calls'
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(String(64), ForeignKey('users.id'), nullable=False)
+    model: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default='reserved')
+    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

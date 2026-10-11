@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.config import REPORT_READ_LEVEL
+from shared.config import REPORT_READ_LEVEL, public_role
 from shared.database import get_db
 from modules.siabumdes.adapters.api.deps import require_roles
 from modules.siabumdes.adapters.api.scope import is_pengelola
@@ -76,6 +76,11 @@ async def chat(body: ChatIn, user: User = Depends(READ), session: AsyncSession =
     assignment = await current_assignment(session, user, lock=True)
     if assignment and body.session_id != assignment.session_id:
         raise HTTPException(409, "Sesi penugasan berubah. Buka kembali Riska.")
+    if is_pengelola(user) and body.unit_usaha_id and body.unit_usaha_id != user.unit_usaha_id:
+        raise HTTPException(403, 'Akses unit lain ditolak.')
+    from modules.siabumdes.application.riska_language import intent
+    if public_role(user.role) != 'admin' and intent(body.message) in {'close', 'lock', 'transfer'}:
+        return await offer_more(session, user, {'message': DENIED})
     if assignment and getattr(assignment, "awaiting_finish", False) and body.message.strip().lower() in {"tidak", "nggak", "enggak", "tidak ada"}:
         return await finish_assignment(session, user, assignment.session_id)
     if assignment and re.fullmatch(r"(?:tidak[, ]+)?(?:selesai|sudah selesai|cukup|tidak ada lagi)[.! ]*", body.message.strip().lower()):

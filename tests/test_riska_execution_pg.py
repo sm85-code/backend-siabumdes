@@ -14,7 +14,7 @@ from sqlalchemy import func, select, text  # noqa: E402
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker  # noqa: E402
 from shared.database import Base  # noqa: E402
 from modules.siabumdes.adapters.api.v1.riska_execution import draft, execute, DraftIn  # noqa: E402
-from modules.siabumdes.identity.infrastructure.models import AiSessionPermission, User  # noqa: E402
+from modules.siabumdes.identity.infrastructure.models import RiskaAssignment, User  # noqa: E402
 from modules.siabumdes.infrastructure.models import Account, Transaction, TransactionType, UnitUsaha, YieldPartner  # noqa: E402
 
 
@@ -34,8 +34,10 @@ async def test_confirm_posts_once_and_revocation_blocks_execution():
             await session.flush()
             user = User(username='test', email='test@example.test', name='Test', role='pengelola',
                         password_hash='unused', unit_usaha_id=unit.id)
-            permission = AiSessionPermission(unit_usaha_id=unit.id, is_allowed=True)
-            session.add_all([user, permission])
+            session.add(user)
+            await session.flush()
+            permission = RiskaAssignment(user_id=user.id, session_id="test-session", role="pengelola", unit_usaha_id=unit.id, active=True)
+            session.add(permission)
             for code, category, subcategory in [('cash', 'aset', 'kas_bank'), ('income', 'pendapatan', 'pendapatan_operasional')]:
                 session.add(Account(code=code, group_code='UU04', unit_usaha_id=unit.id, name=code,
                                     category=category, subcategory=subcategory, normal_balance='debit'))
@@ -46,12 +48,12 @@ async def test_confirm_posts_once_and_revocation_blocks_execution():
             message = f'imbal mitra={partner.id} tanggal={date.today()} bulan=10 tahun=2026 nominal=300'
             result = await draft(DraftIn(message=message), user, session)
             assert await session.scalar(select(func.count()).select_from(Transaction)) == 0
-            permission.is_allowed = False
+            permission.active = False
             await session.flush()
             with pytest.raises(HTTPException) as denied:
                 await execute(result['draft_id'], user, session)
             assert denied.value.status_code == 403
-            permission.is_allowed = True
+            permission.active = True
             await session.flush()
             await execute(result['draft_id'], user, session)
             with pytest.raises(HTTPException) as replay:

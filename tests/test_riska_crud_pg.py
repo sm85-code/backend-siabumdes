@@ -341,7 +341,7 @@ async def test_ai_followup_has_official_report_and_owned_history(crud_context, m
     monkeypatch.setattr(riska_ai, 'interpret', mocked)
     first = await chat(ChatIn(message='jelaskan laba rugi tahun ini', unit_usaha_id=toko.id, ai_mode='sol'), admin, session)
     assert first.get('rows') and first.get('ai_conversation_id')
-    follow = await chat(ChatIn(message='mengapa hasilnya begitu?', unit_usaha_id=toko.id, ai_mode='sol', ai_conversation_id=first['ai_conversation_id']), admin, session)
+    follow = await chat(ChatIn(message='mengapa hasilnya begitu?', unit_usaha_id=toko.id, ai_mode='sol'), admin, session)
     context = mocked.call_args.args[3]
     assert context['laporan']['rows'] == first['rows']
     assert context['percakapan'][0]['user'] == 'jelaskan laba rugi tahun ini'

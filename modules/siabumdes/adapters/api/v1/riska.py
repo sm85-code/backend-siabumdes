@@ -91,6 +91,16 @@ async def chat(body: ChatIn, user: User = Depends(READ), session: AsyncSession =
     from modules.siabumdes.application.riska_sessions import validate_draft_session
     history = None
     scope_id = user.unit_usaha_id if is_pengelola(user) else body.unit_usaha_id
+    if not body.ai_conversation_id and body.ai_mode != 'internal':
+        session_identity = assignment.session_id if assignment else None
+        history = await session.scalar(select(RiskaDraft).where(
+            RiskaDraft.user_id == user.id, RiskaDraft.unit_usaha_id == scope_id,
+            RiskaDraft.consumed.is_(False), RiskaDraft.expires_at > datetime.now(timezone.utc),
+            RiskaDraft.payload['kind'].as_string() == 'ai_history',
+            RiskaDraft.payload['_actor_role'].as_string() == public_role(user.role),
+            RiskaDraft.payload['auth_session_version'].as_integer() == user.session_version,
+            RiskaDraft.payload['_session_id'].as_string() == session_identity,
+        ).order_by(RiskaDraft.expires_at.desc()).limit(1))
     if body.ai_conversation_id:
         history = await session.scalar(select(RiskaDraft).where(RiskaDraft.id == body.ai_conversation_id, RiskaDraft.user_id == user.id).with_for_update())
         if not history or expired(history) or history.payload.get('kind') != 'ai_history':
@@ -100,6 +110,8 @@ async def chat(body: ChatIn, user: User = Depends(READ), session: AsyncSession =
             raise HTTPException(409, 'Sesi login berubah. Mulai percakapan baru.')
         if history.unit_usaha_id != scope_id:
             raise HTTPException(409, 'Entitas percakapan berubah. Mulai percakapan baru untuk entitas yang dipilih.')
+    if history:
+        await validate_draft_session(session, user, history)
     from modules.siabumdes.application import riska_ai
     from .riska_crud import parse_command
     from modules.siabumdes.application.riska_language import intent

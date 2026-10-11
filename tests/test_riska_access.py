@@ -22,7 +22,7 @@ async def test_revoked_assignment_blocks_chat():
 @pytest.mark.asyncio
 async def test_cross_unit_and_macro_requests_denied():
     user = SimpleNamespace(role="pengelola", id="test", unit_usaha_id="own", riska_enabled=True)
-    session = SimpleNamespace(scalar=AsyncMock(return_value=SimpleNamespace(active=True, role="pengelola", unit_usaha_id="own", session_id="test-session")), get=AsyncMock(return_value=SimpleNamespace(id="own", active=True)))
+    session = SimpleNamespace(flush=AsyncMock(), scalar=AsyncMock(return_value=SimpleNamespace(active=True, role="pengelola", unit_usaha_id="own", session_id="test-session")), get=AsyncMock(return_value=SimpleNamespace(id="own", active=True)))
     with pytest.raises(HTTPException) as error:
         await chat(ChatIn(session_id="test-session", message="saldo kas", unit_usaha_id="other"), user, session)
     assert error.value.status_code == 403

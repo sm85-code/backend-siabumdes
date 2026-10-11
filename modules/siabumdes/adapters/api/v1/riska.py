@@ -11,7 +11,7 @@ from shared.database import get_db
 from modules.siabumdes.adapters.api.deps import require_roles
 from modules.siabumdes.adapters.api.scope import is_pengelola
 from modules.siabumdes.identity.infrastructure.models import User
-from modules.siabumdes.application.riska_sessions import current_assignment, finish_assignment
+from modules.siabumdes.application.riska_sessions import current_assignment, finish_assignment, offer_more
 from modules.siabumdes.infrastructure.models import UnitUsaha
 
 router = APIRouter(prefix="/api/riska", tags=["riska"])
@@ -71,13 +71,15 @@ async def chat(body: ChatIn, user: User = Depends(READ), session: AsyncSession =
     if assignment and body.session_id != assignment.session_id:
         raise HTTPException(409, "Sesi penugasan berubah. Buka kembali Riska.")
     import re
+    if assignment and getattr(assignment, "awaiting_finish", False) and body.message.strip().lower() in {"tidak", "nggak", "enggak", "tidak ada"}:
+        return await finish_assignment(session, user, assignment.session_id)
     if assignment and re.fullmatch(r"(?:tidak[, ]+)?(?:selesai|sudah selesai|cukup|tidak ada lagi)[.! ]*", body.message.strip().lower()):
         return await finish_assignment(session, user, assignment.session_id)
     from modules.siabumdes.adapters.api.v1.riska_dialogue import handle_chat
     result = await handle_chat(body, user, session, request)
     if result.get('rows') and 'Ada hal lain' not in result['message']:
         result['message'] += ' Ada hal lain yang bisa Riska bantu? ✨'
-    return result
+    return await offer_more(session, user, result)
 
 
 class ComparisonIn(BaseModel):

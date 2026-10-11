@@ -16,7 +16,7 @@ Chat menampilkan pengguna, role, cakupan, dan konfirmasi sebelum perubahan. Jika
 
 API Admin: GET/PATCH `/api/v1/admin/riska-assignments`; PATCH `{user_id,is_allowed}`. Endpoint lama `/api/v1/admin/riska-permissions` dipertahankan untuk pemberian/pencabutan bantuan secara eksplisit kepada pengelola dalam satu unit. Ini bukan sumber otorisasi runtime.
 
-Widget berada di Layout halaman terautentikasi. Visibilitas diperiksa setiap 30 detik; backend memeriksa izin pada setiap permintaan. Tombol X hanya meminimalkan. “Akhiri sesi bantuan” menawarkan “Masih ada” dan “Tidak, selesai”; pilihan selesai memanggil POST `/api/riska/session/finish` dengan `session_id`, membatalkan draf yang belum disimpan, lalu menyembunyikan widget. Teks `tidak, selesai`, `sudah selesai`, `cukup`, atau `tidak ada lagi` juga mengakhiri sesi sementara. Admin dapat menugaskan kembali.
+Widget berada di Layout halaman terautentikasi. Visibilitas diperiksa setiap 30 detik; backend memeriksa izin pada setiap permintaan. Tombol X hanya meminimalkan. “Akhiri sesi bantuan” menawarkan “Masih ada” dan “Tidak, selesai”; pilihan selesai memanggil POST `/api/riska/session/finish` dengan `session_id`, membatalkan draf yang belum disimpan, lalu menyembunyikan widget. Teks `tidak, selesai`, `sudah selesai`, `cukup`, atau `tidak ada lagi` juga mengakhiri sesi sementara. Jawaban pendek `tidak`, `nggak`, `enggak`, atau `tidak ada` mengakhiri sesi hanya setelah Riska menawarkan bantuan lanjutan; saat pengisian draf, jawaban negatif membatalkan pengisian. Admin dapat menugaskan kembali.
 
 ## Bahasa sederhana dan konfirmasi
 

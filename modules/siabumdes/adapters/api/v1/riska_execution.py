@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.database import get_db
 from shared.config import public_role, WRITE_LEVEL
-from modules.siabumdes.application.riska_sessions import current_assignment, bind_payload, validate_draft_session, set_assignment
+from modules.siabumdes.application.riska_sessions import current_assignment, bind_payload, validate_draft_session, set_assignment, offer_more
 from modules.siabumdes.adapters.api.deps import require_roles
 from modules.siabumdes.adapters.api.scope import assert_can_mutate_period, is_pengelola
 from modules.siabumdes.adapters.api.v1.yield_router import PaymentIn
@@ -314,7 +314,7 @@ async def execute(draft_id: str, user: User = Depends(require_roles(*WRITE_LEVEL
                            detail=f"{unit.code}: {payload['action']}")
     except (ValueError, ArithmeticError):
         raise HTTPException(422, "Data operasional tidak valid; periksa COA dan stok") from None
-    return {"message": "Transaksi dan jurnal berhasil dicatat. Ada hal lain yang bisa Riska bantu? ✨", "refresh_required": True}
+    return await offer_more(session, user, {"message": "Transaksi dan jurnal berhasil dicatat. Ada hal lain yang bisa Riska bantu? ✨", "refresh_required": True})
 
 
 @router.delete("/drafts/{draft_id}")
@@ -326,7 +326,7 @@ async def cancel(draft_id: str, user: User = Depends(require_roles(*WRITE_LEVEL)
         raise HTTPException(409, "Draf tidak tersedia")
     await validate_draft_session(session, user, row)
     row.consumed = True
-    return {"message": "Draf dibatalkan."}
+    return await offer_more(session, user, {"message": "Draf dibatalkan. Ada hal lain yang bisa Riska bantu? ✨"})
 
 
 async def special_table(session, unit, message):

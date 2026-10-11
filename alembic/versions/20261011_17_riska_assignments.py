@@ -17,6 +17,7 @@ def upgrade():
         sa.Column('role', sa.String(64), nullable=False),
         sa.Column('unit_usaha_id', sa.String(64), sa.ForeignKey('unit_usaha.id'), nullable=True),
         sa.Column('active', sa.Boolean(), nullable=False),
+        sa.Column('awaiting_finish', sa.Boolean(), nullable=False, server_default=sa.false()),
         sa.Column('started_at', sa.DateTime(timezone=True), nullable=False),
         sa.Column('ended_at', sa.DateTime(timezone=True), nullable=True))
     op.execute(LEGACY_ASSIGNMENTS)

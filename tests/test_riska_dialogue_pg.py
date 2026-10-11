@@ -264,3 +264,15 @@ async def test_http_rbac_ignores_client_role_and_admin_only_assignments(context)
         actor = manager
         response = await client.get('/api/riska/availability')
         assert response.json()['enabled'] is False
+
+
+@pytest.mark.asyncio
+async def test_simple_no_finishes_only_after_offer_of_more_help(context):
+    session, _, manager, _, _, *_ = context
+    reply = await chat(ChatIn(session_id='manager-session', message='input barang masuk SKU-012 hari ini'), manager, session)
+    assert reply['conversation_id']
+    result = await chat(ChatIn(session_id='manager-session', message='tidak', conversation_id=reply['conversation_id']), manager, session)
+    assert not result.get('session_ended')
+    await chat(ChatIn(session_id='manager-session', message='saldo kas'), manager, session)
+    result = await chat(ChatIn(session_id='manager-session', message='tidak'), manager, session)
+    assert result['session_ended']

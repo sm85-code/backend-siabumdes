@@ -176,6 +176,7 @@ class RiskaAssignment(Base):
     assigned_by: Mapped[Optional[str]] = mapped_column(String(64), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     role: Mapped[str] = mapped_column(String(64), nullable=False)
     unit_usaha_id: Mapped[Optional[str]] = mapped_column(String(64), ForeignKey("unit_usaha.id"), nullable=True)
+    awaiting_finish: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

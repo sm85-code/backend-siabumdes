@@ -57,6 +57,7 @@ async def set_assignment(session, actor, recipient_id, allowed):
         row.started_at = datetime.now(timezone.utc)
         row.ended_at = None
         row.active = True
+        row.awaiting_finish = False
     elif row:
         row.active = False
         row.ended_at = datetime.now(timezone.utc)
@@ -93,3 +94,12 @@ async def validate_draft_session(session, user, row):
     assignment = await current_assignment(session, user, lock=True)
     if row.payload.get('_actor_role') != public_role(user.role) or row.payload.get('_session_id') != (assignment.session_id if assignment else None):
         raise HTTPException(409, 'Hak akses atau sesi draf berubah. Buat draf baru.')
+
+
+async def offer_more(session, user, result):
+    assignment = await current_assignment(session, user, lock=True)
+    if assignment:
+        assignment.awaiting_finish = bool(not result.get('draft_id') and not result.get('conversation_id')
+                                          and 'ada hal lain' in result.get('message', '').lower())
+        await session.flush()
+    return result

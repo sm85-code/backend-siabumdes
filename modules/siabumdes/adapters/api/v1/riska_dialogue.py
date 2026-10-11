@@ -244,6 +244,10 @@ async def handle_chat(body, user, session, request=None):
     assignment_reply = None if intent(message) == 'cancel' else await assignment_message(session, user, message)
     if assignment_reply is not None:
         return assignment_reply
+    from .riska_crud import handle_crud
+    crud_reply = await handle_crud(session, user, body)
+    if crud_reply is not None:
+        return crud_reply
     action = intent(message)
     if action in STRATEGIC and not admin_user(user):
         return {'message': DENIED}

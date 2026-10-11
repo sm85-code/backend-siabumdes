@@ -279,7 +279,10 @@ async def execute(draft_id: str, user: User = Depends(require_roles(*WRITE_LEVEL
         return await execute_assignment(session, user, row)
     if row.payload.get("kind") == "strategic":
         return await execute_strategy(session, user, row, request)
-    if row.payload.get("kind") == "dialogue":
+    if row.payload.get("kind") == "crud":
+        from .riska_crud import execute_crud
+        return await execute_crud(session, user, row, request)
+    if row.payload.get("kind") in {"dialogue", "crud_dialogue"}:
         raise HTTPException(409, "Lengkapi data sebelum eksekusi")
     unit = await operation_unit(session, user, row.unit_usaha_id)
     try:

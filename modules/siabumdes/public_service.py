@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from modules.siabumdes.application.services import FinanceService
-from modules.siabumdes.infrastructure.models import Account, JournalEntry, Transaction
+from modules.siabumdes.infrastructure.models import Account, JournalEntry, Transaction, UnitUsaha
 
 
 class SiabumdesPublicService:
@@ -44,16 +44,21 @@ class SiabumdesPublicService:
         if existing:
             return existing.id
 
+        unit = await self.session.get(UnitUsaha, unit_usaha_id)
+        if not unit:
+            raise ValueError("Unit tidak ditemukan")
         debit_acc = await self.session.scalar(
             select(Account).where(
                 Account.code == debit_account_code,
                 Account.active.is_(True),
+                Account.group_code == unit.code,
             )
         )
         credit_acc = await self.session.scalar(
             select(Account).where(
                 Account.code == credit_account_code,
                 Account.active.is_(True),
+                Account.group_code == unit.code,
             )
         )
         if not debit_acc or not credit_acc:

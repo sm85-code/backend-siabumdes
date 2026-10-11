@@ -65,4 +65,5 @@ jobs:
           # connection is attempted with ssl=True and the integration test
           # skips itself instead of running.
           POSTGRES_SSL: "false"
-        run: python -m pytest tests/test_postgresql_integration.py tests/test_b1_stock_atomicity.py -n 0
+          RISKA_TEST_DATABASE_URL: postgresql+asyncpg://siabumdes:siabumdes@localhost:5432/siabumdes_test
+        run: python -m pytest tests/test_postgresql_integration.py tests/test_b1_stock_atomicity.py tests/test_riska_execution_pg.py -n 0

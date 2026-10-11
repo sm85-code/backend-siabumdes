@@ -27,6 +27,7 @@ from modules.siabumdes.adapters.api.v1.public_router import router as public_rou
 from modules.siabumdes.adapters.api.v1.reports_router import router as reports_router
 from modules.siabumdes.adapters.api.v1.transaction_router import router as transaction_router
 from modules.siabumdes.adapters.api.v1.riska import router as riska_router
+from modules.siabumdes.adapters.api.v1.riska_execution import router as riska_execution_router, admin_router as riska_admin_router
 from shared.config import APP_TITLE, CORS_ORIGIN_REGEX, CORS_ORIGINS, origin_allowed
 from shared.database import engine
 from modules.siabumdes.schema import ensure_schema
@@ -75,6 +76,8 @@ app.add_middleware(
 )
 
 app.include_router(riska_router)
+app.include_router(riska_execution_router)
+app.include_router(riska_admin_router)
 app.include_router(public_router)
 app.include_router(auth_router)
 app.include_router(period_close_router)

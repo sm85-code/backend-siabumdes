@@ -13,7 +13,7 @@ from modules.siabumdes.adapters.api.v1.riska import ChatIn, DENIED, chat
 @pytest.mark.asyncio
 async def test_revoked_assignment_blocks_chat():
     user = SimpleNamespace(role="pengelola", unit_usaha_id="own", riska_enabled=False)
-    session = SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(active=True)))
+    session = SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(id="own", active=True, is_allowed=False)))
     with pytest.raises(HTTPException) as error:
         await chat(ChatIn(message="saldo kas"), user, session)
     assert error.value.status_code == 403
@@ -22,10 +22,10 @@ async def test_revoked_assignment_blocks_chat():
 @pytest.mark.asyncio
 async def test_cross_unit_and_macro_requests_denied():
     user = SimpleNamespace(role="pengelola", unit_usaha_id="own", riska_enabled=True)
-    session = SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(active=True)))
+    session = SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(id="own", active=True, is_allowed=True)))
     with pytest.raises(HTTPException) as error:
         await chat(ChatIn(message="saldo kas", unit_usaha_id="other"), user, session)
     assert error.value.status_code == 403
     result = await chat(ChatIn(message="transfer bagi hasil"), user, session)
     assert result["message"] == DENIED
-    assert session.get.await_count == 2
+    assert session.get.await_count == 4

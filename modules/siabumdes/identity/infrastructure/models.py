@@ -6,8 +6,8 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, Integer, Numeric, String, Text, UniqueConstraint
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from shared.database import Base
@@ -144,3 +144,24 @@ class ClosedPeriod(Base):
     entries: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     closed_by: Mapped[str] = mapped_column(String(64), nullable=False)
     closed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class AiSessionPermission(Base):
+    """Unit-scoped Riska assignment; missing rows deny manager access."""
+    __tablename__ = "ai_session_permissions"
+
+    unit_usaha_id: Mapped[str] = mapped_column(String(64), ForeignKey("unit_usaha.id"), primary_key=True)
+    is_allowed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class RiskaDraft(Base):
+    """Server-owned, expiring operation; consumed atomically with financial posting."""
+    __tablename__ = "riska_drafts"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(String(64), ForeignKey("users.id"), nullable=False)
+    unit_usaha_id: Mapped[str] = mapped_column(String(64), ForeignKey("unit_usaha.id"), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    preview: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

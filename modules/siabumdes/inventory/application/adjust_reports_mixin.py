@@ -34,6 +34,9 @@ class InventoryAdjustReportsMixin:
         debit_account_code: Optional[str] = None,
         credit_account_code: Optional[str] = None,
         created_by: str = "system-inventory",
+        inventory_account_code: str = PERSEDIAAN_ACCOUNT_CODE,
+        transit_account_code: str = PENYESUAIAN_NILAI_PERSEDIAAN_ACCOUNT_CODE,
+        loss_account_code: str = BEBAN_KERUGIAN_BARANG_ACCOUNT_CODE,
     ) -> dict[str, Any]:
         if quantity_delta == 0:
             raise ValueError("quantity_delta tidak boleh 0")
@@ -62,9 +65,9 @@ class InventoryAdjustReportsMixin:
         elif amount > 0 and is_loss:
             await validate_coa_codes(
                 self.session,
-                PENYESUAIAN_NILAI_PERSEDIAAN_ACCOUNT_CODE,
-                PERSEDIAAN_ACCOUNT_CODE,
-                BEBAN_KERUGIAN_BARANG_ACCOUNT_CODE,
+                transit_account_code,
+                inventory_account_code,
+                loss_account_code,
             )
 
         product.qty_on_hand = new_qty
@@ -89,8 +92,8 @@ class InventoryAdjustReportsMixin:
                 movement_date=adjustment_date,
                 unit_usaha_id=uid,
                 amount=amount,
-                debit_account_code=PENYESUAIAN_NILAI_PERSEDIAAN_ACCOUNT_CODE,
-                credit_account_code=PERSEDIAAN_ACCOUNT_CODE,
+                debit_account_code=transit_account_code,
+                credit_account_code=inventory_account_code,
                 description=f"{desc_base} · Pengurangan Persediaan",
                 reference=reduction_reference,
                 created_by=created_by,
@@ -101,8 +104,8 @@ class InventoryAdjustReportsMixin:
                 movement_date=adjustment_date,
                 unit_usaha_id=uid,
                 amount=amount,
-                debit_account_code=BEBAN_KERUGIAN_BARANG_ACCOUNT_CODE,
-                credit_account_code=PENYESUAIAN_NILAI_PERSEDIAAN_ACCOUNT_CODE,
+                debit_account_code=loss_account_code,
+                credit_account_code=transit_account_code,
                 description=f"{desc_base} · Beban Kerugian",
                 reference=loss_reference,
                 created_by=created_by,

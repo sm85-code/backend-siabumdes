@@ -392,3 +392,19 @@ async def test_six_unit_analysis_keeps_central_revenue_separate(crud_context):
     central = next(r for r in reply['rows'] if r['entitas'] == 'BUMDES Pusat')
     assert central['porsi_omzet_unit_persen'] == 'Tidak berlaku'
     assert 'bukan pendapatan Pusat' in reply['message']
+
+
+@pytest.mark.asyncio
+async def test_casual_field_reply_keeps_already_supplied_partner_name(crud_context, monkeypatch):
+    from unittest.mock import AsyncMock
+    from modules.siabumdes.application import riska_ai
+    session, admin, _, _, _, air, *_ = crud_context
+    first = await talk(session, admin, 'tambah mitra', ['Bu Ani'], air)
+    mocked = AsyncMock(return_value=(riska_ai.Interpretation(action='command', command='100 ribu', reply='Baik, modalnya saya sesuaikan.'), {'model': 'mock-sol'}))
+    monkeypatch.setattr(riska_ai, 'ready', lambda provider: True)
+    monkeypatch.setattr(riska_ai, 'interpret', mocked)
+    reply = await chat(ChatIn(message='sebenarnya modalnya seratus ribu', conversation_id=first['conversation_id'], unit_usaha_id=air.id, ai_mode='sol'), admin, session)
+    assert reply.get('draft_id') and not reply.get('conversation_id'), reply
+    pending = mocked.call_args.args[3]['pengisian']
+    assert pending['data']['name'] == 'Bu Ani' and pending['expecting'] == 'capital'
+    assert (await session.get(RiskaDraft, reply['draft_id'])).payload['data']['capital'] == '100000'

@@ -108,6 +108,13 @@ async def chat(body: ChatIn, user: User = Depends(READ), session: AsyncSession =
     if scope_id and (not selected_entity or not selected_entity.active):
         raise HTTPException(403, 'Entitas yang dipilih tidak aktif atau tidak tersedia.')
     context['entitas_terpilih'] = {'code': selected_entity.code, 'name': selected_entity.name} if selected_entity else {'code': 'BUMDES', 'name': 'BUMDES Pusat'}
+    complex_answer = False
+    if body.conversation_id:
+        filling = await session.scalar(select(RiskaDraft).where(RiskaDraft.id == body.conversation_id, RiskaDraft.user_id == user.id).with_for_update())
+        if filling and not expired(filling) and filling.payload.get('kind') == 'crud_dialogue':
+            await validate_draft_session(session, user, filling)
+            context['pengisian'] = {key: filling.payload.get(key) for key in ('resource', 'action', 'expecting', 'data')}
+            complex_answer = bool(re.search(r'\b(?:sebenarnya|maksud|jadi|koreksi)\b', body.message, re.I) or len(body.message) > 40)
     if re.search(r'\b(?:transaksi|akun|coa)\b', body.message, re.I) and not body.conversation_id:
         from modules.siabumdes.infrastructure.models import Account, TransactionType
         from .riska_dialogue import resolve_units
@@ -134,19 +141,21 @@ async def chat(body: ChatIn, user: User = Depends(READ), session: AsyncSession =
         if interpretation.action != 'command':
             if intent(body.message) in {'cash', 'profit'} and not body.conversation_id:
                 return await handle_chat(body, user, session, request)
-            return {'message': interpretation.reply or 'Boleh ceritakan bagian pekerjaan yang ingin saya bantu?'}
+            return {'message': interpretation.reply or 'Boleh ceritakan bagian pekerjaan yang ingin saya bantu?', **({'conversation_id': body.conversation_id} if body.conversation_id else {})}
         command = parse_command(interpretation.command)
         action = intent(interpretation.command)
         write = command and command[1] != 'read' or action in {'masuk', 'keluar', 'rusak', 'imbal', 'close', 'lock', 'transfer'} or re.search(r'\b(?:aktifkan|nonaktifkan)\b', interpretation.command, re.I)
         requested_write = re.search(r'\b(?:tambah|tambahin|buat|bikinkan|bikinin|input|catat|masukkan|masukin|ubah|edit|koreksi|hapus|hapuskan|buang|aktifkan|nonaktifkan|tutup|kunci|transfer|bekukan|setor|bayar|beli|jual|rusak)\b', body.message, re.I)
         if write and (not requested_write or re.search(r'\b(?:jangan|bukan|tidak|batalkan)\b', body.message, re.I)):
             return {'message': 'Saya bisa membantu memeriksa datanya terlebih dahulu. Jika Anda ingin mengubah data, mohon sebutkan tindakan yang diinginkan; perubahan tetap menunggu konfirmasi Anda.'}
+        if body.conversation_id and context.get('pengisian') and not write:
+            return await handle_chat(body.model_copy(update={'message': interpretation.command, 'ai_mode': 'internal'}), user, session, request)
         if not (command or action != 'unknown' or re.search(r'\b(?:aktifkan|nonaktifkan)\b', interpretation.command, re.I)):
             return {'message': interpretation.reply or 'Boleh jelaskan data atau tindakan yang Anda maksud? Saya bantu langkah demi langkah.'}
         return await handle_chat(body.model_copy(update={'message': interpretation.command, 'ai_mode': 'internal'}), user, session, request)
 
     # Explicit model mode understands the whole request before internal dispatch.
-    if body.ai_mode in {'sol', 'sonnet'} and not body.conversation_id and riska_ai.ready(provider):
+    if body.ai_mode in {'sol', 'sonnet'} and (not body.conversation_id or complex_answer) and intent(body.message) != 'cancel' and riska_ai.ready(provider):
         interpretation, usage = await ask(context)
         result = await dispatch(interpretation)
     else:

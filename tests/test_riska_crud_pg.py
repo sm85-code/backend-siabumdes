@@ -217,3 +217,104 @@ async def test_admin_self_role_change_refreshes_and_revokes_old_drafts(crud_cont
     assert reply['auth_refresh_required'] and reply['session_ended'] and admin.role == 'bendahara'
     with pytest.raises(HTTPException):
         await execute(pending['draft_id'], admin, session)
+
+
+@pytest.mark.asyncio
+async def test_new_command_replaces_pending_dialogue_and_inline_unit(crud_context):
+    session, admin, _, _, toko, yield_unit, *_ = crud_context
+    first = await talk(session, admin, 'hapus transaksi', [], toko)
+    assert first.get('conversation_id')
+    reply = await chat(ChatIn(message='tambah mitra ke UU04', conversation_id=first['conversation_id'], unit_usaha_id=toko.id), admin, session)
+    assert reply.get('conversation_id') != first['conversation_id']
+    assert 'nama lengkap' in reply['message']
+    row = await session.get(RiskaDraft, reply['conversation_id'])
+    assert row.unit_usaha_id == yield_unit.id
+    reply = await chat(ChatIn(message='Bu Ani', conversation_id=reply['conversation_id'], unit_usaha_id=toko.id), admin, session)
+    assert 'modal' in reply['message']
+    reply = await chat(ChatIn(message='1 juta', conversation_id=reply['conversation_id'], unit_usaha_id=toko.id), admin, session)
+    assert reply.get('draft_id'), reply
+    assert not await session.scalar(select(YieldPartner).where(YieldPartner.name == 'Bu Ani'))
+
+
+@pytest.mark.asyncio
+async def test_model_interpretation_uses_scoped_drafts_and_no_implicit_write(crud_context, monkeypatch):
+    from unittest.mock import AsyncMock
+    from modules.siabumdes.application import riska_ai
+    session, admin, manager, _, _, air, *_ = crud_context
+    monkeypatch.setattr(riska_ai, 'ready', lambda provider: True)
+    interpret = AsyncMock(return_value=(riska_ai.Interpretation(action='command', command='tambah mitra ke UU04', reply='Baik'), {'model': 'mock-sol'}))
+    monkeypatch.setattr(riska_ai, 'interpret', interpret)
+    reply = await chat(ChatIn(message='bikinin data baru dong', ai_mode='sol'), admin, session)
+    assert reply.get('conversation_id') and 'nama lengkap' in reply['message']
+    assert (await session.get(RiskaDraft, reply['conversation_id'])).unit_usaha_id == air.id
+    assert not await session.scalar(select(YieldPartner).where(YieldPartner.name == 'Baru'))
+    denied = await chat(ChatIn(message='boleh jelaskan sesuatu?', ai_mode='sol'), admin, session)
+    assert not denied.get('conversation_id') and not denied.get('draft_id')
+    with pytest.raises(HTTPException) as error:
+        await chat(ChatIn(message='bikinin data baru dong', ai_mode='sol', session_id='manager-session'), manager, session)
+    assert error.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_ai_budget_is_durable_and_provider_output_is_typed(crud_context, monkeypatch):
+    import json
+    import httpx
+    from unittest.mock import AsyncMock
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    from modules.siabumdes.application import riska_ai
+    session, admin, *_ = crud_context
+    await session.commit()
+    monkeypatch.setattr(riska_ai, 'SessionLocal', async_sessionmaker(session.bind, expire_on_commit=False))
+    monkeypatch.setenv('RISKA_AI_DAILY_USD', '0.06')
+    ident = await riska_ai.reserve(admin.id, 'mock')
+    assert ident
+    with pytest.raises(HTTPException) as quota:
+        await riska_ai.reserve(admin.id, 'mock')
+    assert quota.value.status_code == 429
+    monkeypatch.setenv('OPENAI_API_KEY', 'test-only')
+    monkeypatch.setattr(riska_ai, 'reserve', AsyncMock(return_value=ident))
+    monkeypatch.setattr(riska_ai, 'record', AsyncMock())
+    async def post(*args, **kwargs):
+        assert kwargs['json']['store'] is False
+        text = json.dumps({'action': 'clarify', 'command': '', 'reply': 'Boleh ceritakan kebutuhan Anda? Saya bantu, ya.'})
+        return httpx.Response(200, request=httpx.Request('POST', 'https://api.openai.com/v1/responses'), json={'status': 'completed', 'output': [{'type': 'message', 'content': [{'type': 'output_text', 'text': text}]}], 'usage': {'input_tokens': 40, 'output_tokens': 20}})
+    monkeypatch.setattr(riska_ai.httpx.AsyncClient, 'post', post)
+    result, usage = await riska_ai.interpret(admin, 'Bantu saya')
+    assert result.action == 'clarify' and usage['input_tokens'] == 40
+    riska_ai.record.assert_awaited_once_with(ident, 'succeeded', 40, 20)
+
+
+@pytest.mark.asyncio
+async def test_sonnet_protocol_and_invalid_output_fail_without_execution(crud_context, monkeypatch):
+    import httpx
+    from unittest.mock import AsyncMock
+    from modules.siabumdes.application import riska_ai
+    _, admin, *_ = crud_context
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'test-only')
+    monkeypatch.setattr(riska_ai, 'reserve', AsyncMock(return_value='call'))
+    monkeypatch.setattr(riska_ai, 'record', AsyncMock())
+    async def post(*args, **kwargs):
+        assert kwargs['headers']['anthropic-version'] == '2023-06-01'
+        return httpx.Response(200, request=httpx.Request('POST', 'https://api.anthropic.com/v1/messages'), json={'stop_reason': 'end_turn', 'content': [{'type': 'text', 'text': '```json\n{"action":"clarify","command":"","reply":"Boleh ceritakan kebutuhan Anda?"}\n```'}], 'usage': {'input_tokens': 20, 'output_tokens': 10}})
+    monkeypatch.setattr(riska_ai.httpx.AsyncClient, 'post', post)
+    result, usage = await riska_ai.interpret(admin, 'Bantu saya', 'sonnet')
+    assert result.action == 'clarify' and usage['provider'] == 'sonnet'
+    async def invalid(*args, **kwargs):
+        return httpx.Response(200, request=httpx.Request('POST', 'https://api.anthropic.com/v1/messages'), json={'stop_reason': 'end_turn', 'content': [{'type': 'text', 'text': 'not-json'}]})
+    monkeypatch.setattr(riska_ai.httpx.AsyncClient, 'post', invalid)
+    with pytest.raises(HTTPException) as error:
+        await riska_ai.interpret(admin, 'Bantu saya', 'sonnet')
+    assert error.value.status_code == 503
+    assert riska_ai.record.call_args.args == ('call', 'failed')
+
+
+@pytest.mark.asyncio
+async def test_wrong_partner_entity_requests_entity_not_repair_fields(crud_context):
+    session, admin, _, _, toko, air, *_ = crud_context
+    reply = await talk(session, admin, 'tambah mitra', [], toko)
+    assert reply.get('conversation_id') and [c['message'] for c in reply['choices']] == ['UU04']
+    reply = await chat(ChatIn(message='UU04', conversation_id=reply['conversation_id'], unit_usaha_id=toko.id), admin, session)
+    assert 'nama lengkap' in reply['message']
+    direct = await talk(session, admin, 'tambah mitra Bu Ani modal 1 juta ke UU04', [], toko)
+    assert direct.get('draft_id'), direct
+    assert direct['preview']['unit'] == air.name

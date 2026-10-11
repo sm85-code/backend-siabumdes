@@ -212,21 +212,26 @@ async def question(session, user, state, field, row=None, extra=''):
     else:
         row = await store(session, user, state.get('unit_id'), payload, {})
     resource = state['resource']
+    subject = resource + (' “' + str(state.get('data', {}).get('name')) + '”' if state.get('data', {}).get('name') else '')
     if field == 'entity':
-        prompt = 'Untuk entitas mana? Jawab Pusat atau nama/kode unit.'
+        prompt = 'Boleh tahu data ini untuk BUMDES Pusat atau unit usaha mana? Pilih dari tombol di bawah, ya.'
     elif field == 'target':
-        prompt = f'{resource.capitalize()} mana yang dimaksud? Sebutkan nama lengkap, kode, atau referensinya. Anda juga bisa membatalkan lalu meminta daftar {resource}.'
+        prompt = f'Boleh sebutkan {resource} yang ingin Anda pilih, memakai nama atau referensinya? Jika belum ingat, ketik “lihat {resource}” agar saya tampilkan daftarnya.'
     elif field in {'field', 'repair_field'}:
         prompt = 'Bagian mana yang ingin diubah? Pilih: ' + ', '.join(NAMES.get(k, k) for k in (FIELDS[resource] if field == 'repair_field' else UPDATES[resource])) + '.'
     else:
-        prompt = 'Mohon isi ' + NAMES.get(field, field) + '.'
+        prompt = 'Boleh saya tahu ' + NAMES.get(field, field) + '?'
     choices = [{'label': NAMES.get(key, key), 'message': key} for key in (FIELDS[resource] if field == 'repair_field' else UPDATES[resource])] if field in {'field', 'repair_field'} else []
     if field == 'entity':
         units = list((await session.scalars(select(UnitUsaha).where(UnitUsaha.active.is_(True)).order_by(UnitUsaha.code))).all())
-        choices = [{'label': 'BUMDES Pusat', 'message': 'pusat'}] + [{'label': unit.name, 'message': unit.code} for unit in units]
+        if resource in {'mitra', 'pembayaran'}:
+            units = [unit for unit in units if unit.code == 'UU04']
+        elif resource == 'produk':
+            units = [unit for unit in units if unit.business_type in {'perdagangan', 'manufaktur'}]
+        choices = ([] if resource in {'mitra', 'pembayaran', 'produk'} else [{'label': 'BUMDES Pusat', 'message': 'pusat'}]) + [{'label': unit.name, 'message': unit.code} for unit in units]
     if field in {'business_type', 'normal_balance', 'active', 'role'}:
         choices = [{'label': value, 'message': value} for value in ({'business_type': sorted(master.BUSINESS_TYPES), 'normal_balance': ['debit', 'kredit'], 'active': ['aktif', 'nonaktif'], 'role': sorted(PUBLIC_ROLES)}[field])]
-    return {'conversation_id': row.id, 'choices': choices, 'message': f'Baik, saya bantu {LABELS[state["action"]].lower()} {resource}. {extra}{prompt} Anda boleh menjawab singkat atau ketik “batal”.'}
+    return {'conversation_id': row.id, 'choices': choices, 'message': f'Baik, saya bantu menyiapkan {subject}. {extra}{prompt} Jawab singkat saja; belum ada data yang disimpan.'}
 
 
 def choose_field(resource, text):
@@ -372,7 +377,7 @@ async def related_records(session, resource, data, unit):
 
 
 async def handle_crud(session, user, body):
-    from .riska_dialogue import expired, store
+    from .riska_dialogue import expired, store, resolve_units
     command = parse_command(body.message)
     row = None
     if body.conversation_id:
@@ -385,6 +390,9 @@ async def handle_crud(session, user, body):
         if re.fullmatch(r'(?:batal|batalkan|jangan)', clean(body.message), re.I):
             row.consumed = True
             return {'message': 'Baik, draf dibatalkan tanpa perubahan data.'}
+        if command and re.match(r'^(?:(?:riska|tolong)[, ]+)*(?:tambah|buat|input|catat|ubah|edit|koreksi|hapus|lihat|daftar|cari|aktifkan|nonaktifkan)\s+', clean(body.message), re.I):
+            row.consumed = True
+            return await handle_crud(session, user, body.model_copy(update={'conversation_id': None}))
         state = {k: v for k, v in row.payload.items() if k != 'kind' and not k.startswith('_')}
     else:
         if not command:
@@ -398,15 +406,39 @@ async def handle_crud(session, user, body):
         if patch:
             tail, field, value = patch
             state['inline_patch'] = {'field': field, 'value': value}
+        if resource not in {'unit', 'pengguna'}:
+            try:
+                selected, pusat = await resolve_units(session, body.message, body.unit_usaha_id, user.unit_usaha_id if is_pengelola(user) else None)
+            except ValueError as exc:
+                return await question(session, user, state, 'entity', extra=f'{exc} ')
+            if len(selected) > 1 or selected and pusat:
+                return {'message': 'Pilih satu entitas untuk perubahan ini. Tidak ada data yang disimpan.'}
+            if selected:
+                state['unit_id'] = selected[0].id
+                tail = re.sub(r'(?:^|\s+)(?:ke|di|untuk|pada)\s+(?:' + re.escape(selected[0].code) + '|' + re.escape(selected[0].name) + r')\b', '', tail, flags=re.I).strip()
+            elif pusat:
+                state['entity_selected'] = True
+        if action == 'create' and resource == 'mitra' and tail:
+            capital = re.search(r'\bmodal\s*(?:=|sebesar|senilai)?\s*(.+)$', tail, re.I)
+            if capital:
+                try:
+                    state['data']['capital'] = str(amount(capital.group(1)))
+                except ValueError:
+                    pass
+                tail = tail[:capital.start()].strip()
+            name = re.sub(r'^baru\s+', '', tail, flags=re.I).strip().strip('"')
+            if name:
+                state['data']['name'] = name
         if action != 'create' and resource != 'pembayaran' and tail:
             state['data']['target'] = tail
         if is_pengelola(user):
             state['unit_id'] = user.unit_usaha_id
-        elif body.unit_usaha_id:
+        elif body.unit_usaha_id and not state.get('unit_id') and not state.get('entity_selected'):
             state['unit_id'] = body.unit_usaha_id
     resource, action, data = state['resource'], state['action'], state['data']
     authorize(user, resource, action)
     unit = await session.get(UnitUsaha, state['unit_id']) if state.get('unit_id') else None
+    existing = None
     try:
         if is_pengelola(user) and (body.unit_usaha_id and body.unit_usaha_id != user.unit_usaha_id or state.get('unit_id') != user.unit_usaha_id):
             raise HTTPException(403, 'Akses unit lain ditolak.')
@@ -432,6 +464,11 @@ async def handle_crud(session, user, body):
             state['value_supplied'] = True
         if resource not in {'unit', 'pengguna'} and not state.get('entity_selected') and not state.get('unit_id'):
             return await question(session, user, state, 'entity', row)
+        wrong_entity = resource in {'mitra', 'pembayaran'} and (not unit or unit.code != 'UU04') or resource == 'produk' and (not unit or unit.business_type not in {'perdagangan', 'manufaktur'})
+        if wrong_entity:
+            if is_pengelola(user):
+                raise HTTPException(403, 'Modul ini belum tersedia untuk unit Anda. Saya dapat membantu pekerjaan lain sesuai izin unit Anda.')
+            return await question(session, user, state, 'entity', row, 'Modul ini memerlukan unit yang sesuai. Silakan pilih dari tombol berikut. ')
         if resource == 'unit' and action == 'read':
             statement = select(UnitUsaha)
             if is_pengelola(user):
@@ -560,6 +597,10 @@ async def handle_crud(session, user, body):
         note += ' Riwayat unit tetap dipertahankan; unit akan dinonaktifkan.' if resource == 'unit' and action == 'delete' else ''
         return {'draft_id': draft.id, 'preview': preview, 'confirmation_level': 'admin' if public_role(user.role) == 'admin' else None, 'message': f'Draf {preview["operation"].lower()} siap. Periksa rincian sebelum memilih Ya, Eksekusi.{note}'}
     except (ValueError, ArithmeticError, ValidationError) as exc:
+        if action == 'delete' and existing is not None:
+            if row:
+                row.consumed = True
+            return {'message': f'Penghapusan belum dapat dilakukan: {str(exc)[:500]}. Tidak ada data yang diubah. Periksa melalui modul asal atau kirim perintah baru.'}
         return await question(session, user, state, expecting or state.get('update_field') or ('repair_field' if action == 'create' and all(k in data for k in FIELDS[resource]) else 'target' if action != 'create' else next((k for k in FIELDS[resource] if k not in data), FIELDS[resource][0])), row, f'Saya perlu memastikan datanya: {str(exc)[:500]}. ')
 
 

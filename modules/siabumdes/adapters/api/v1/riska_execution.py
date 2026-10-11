@@ -4,19 +4,21 @@ from decimal import Decimal
 from zoneinfo import ZoneInfo
 import shlex
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.database import get_db
+from shared.config import public_role, WRITE_LEVEL
+from modules.siabumdes.application.riska_sessions import current_assignment, bind_payload, validate_draft_session, set_assignment, offer_more
 from modules.siabumdes.adapters.api.deps import require_roles
 from modules.siabumdes.adapters.api.scope import assert_can_mutate_period, is_pengelola
 from modules.siabumdes.adapters.api.v1.yield_router import PaymentIn
 from modules.siabumdes.application.yield_transactions import lock_partner, save_linked_payment, find_payment, TYPE_CODE
 from modules.siabumdes.identity.application.services import record_audit
-from modules.siabumdes.identity.infrastructure.models import AiSessionPermission, RiskaDraft, User
+from modules.siabumdes.identity.infrastructure.models import AiSessionPermission, RiskaAssignment, RiskaDraft, User
 from modules.siabumdes.infrastructure.models import Account, UnitUsaha, TransactionType
 from modules.siabumdes.inventory.infrastructure.models import Product, Vendor, Customer
 from modules.siabumdes.inventory.application.services import InventoryService
@@ -28,6 +30,7 @@ admin_router = APIRouter(prefix="/api/v1/admin", tags=["riska-permissions"])
 
 class DraftIn(BaseModel):
     message: str = Field(min_length=1, max_length=1000)
+    unit_usaha_id: str | None = None
 
 
 class PermissionPatch(BaseModel):
@@ -37,31 +40,73 @@ class PermissionPatch(BaseModel):
 
 @admin_router.get("/riska-permissions")
 async def permissions(admin: User = Depends(require_roles("admin")), session: AsyncSession = Depends(get_db)):
-    rows = (await session.execute(select(UnitUsaha, AiSessionPermission.is_allowed).outerjoin(
-        AiSessionPermission, AiSessionPermission.unit_usaha_id == UnitUsaha.id).order_by(UnitUsaha.code))).all()
+    units = list((await session.scalars(select(UnitUsaha).order_by(UnitUsaha.code))).all())
+    active_assignments = (await session.execute(select(RiskaAssignment, User).join(User, User.id == RiskaAssignment.user_id)
+                         .where(RiskaAssignment.active.is_(True)))).all()
+    granted_units = {row.unit_usaha_id for row, user in active_assignments
+                     if user.active and is_pengelola(user) and row.role == public_role(user.role)
+                     and row.unit_usaha_id == user.unit_usaha_id}
     return [{"unit_usaha_id": u.id, "code": u.code, "name": u.name, "active": u.active,
-             "is_allowed": bool(allowed)} for u, allowed in rows]
+             "is_allowed": u.id in granted_units and u.active} for u in units]
 
 
 @admin_router.patch("/riska-permissions")
 async def patch_permission(body: PermissionPatch, admin: User = Depends(require_roles("admin")),
                            session: AsyncSession = Depends(get_db)):
-    unit = await session.scalar(select(UnitUsaha).where(UnitUsaha.id == body.unit_usaha_id).with_for_update())
+    unit = await session.get(UnitUsaha, body.unit_usaha_id)
     if not unit:
         raise HTTPException(404, "Unit tidak ditemukan")
-    await session.execute(insert(AiSessionPermission).values(unit_usaha_id=unit.id, is_allowed=body.is_allowed)
-                          .on_conflict_do_update(index_elements=["unit_usaha_id"], set_={"is_allowed": body.is_allowed}))
-    await record_audit(session, actor=admin, action="riska_unit_permission", entity="ai_session_permissions",
-                       entity_id=unit.id, detail=f"is_allowed={body.is_allowed}")
+    recipients = list((await session.scalars(select(User).where(User.unit_usaha_id == unit.id).order_by(User.id))).all())
+    for recipient in recipients:
+        if is_pengelola(recipient):
+            await set_assignment(session, admin, recipient.id, body.is_allowed)
+    await session.execute(insert(AiSessionPermission).values(unit_usaha_id=unit.id, is_allowed=False)
+                          .on_conflict_do_update(index_elements=["unit_usaha_id"], set_={"is_allowed": False}))
     return {"unit_usaha_id": unit.id, "is_allowed": body.is_allowed}
 
 
+class AssignmentPatch(BaseModel):
+    user_id: str
+    is_allowed: bool
+
+
+@admin_router.get("/riska-assignments")
+async def assignments(admin: User = Depends(require_roles("admin")), session: AsyncSession = Depends(get_db)):
+    rows = (await session.execute(select(User, RiskaAssignment, UnitUsaha).outerjoin(
+        RiskaAssignment, RiskaAssignment.user_id == User.id).outerjoin(UnitUsaha, UnitUsaha.id == User.unit_usaha_id)
+        .order_by(User.name))).all()
+    return [{"user_id": u.id, "name": u.name, "username": u.username, "role": public_role(u.role),
+             "active": u.active, "unit": unit.name if unit else "BUMDES Pusat", "unit_active": unit.active if unit else True,
+             "is_allowed": bool(row and row.active and row.role == public_role(u.role) and row.unit_usaha_id == u.unit_usaha_id),
+             "session_id": row.session_id if row else None}
+            for u, row, unit in rows if public_role(u.role) != "admin"]
+
+
+@admin_router.patch("/riska-assignments")
+async def patch_assignment(body: AssignmentPatch, admin: User = Depends(require_roles("admin")),
+                           session: AsyncSession = Depends(get_db)):
+    return await set_assignment(session, admin, body.user_id, body.is_allowed)
+
+
 async def manager_unit(session, user):
-    # Lock assignment owner so admin revocation and execution have a serial order.
+    await current_assignment(session, user, lock=True)
     unit = await session.scalar(select(UnitUsaha).where(UnitUsaha.id == user.unit_usaha_id).with_for_update())
-    permission = await session.get(AiSessionPermission, user.unit_usaha_id) if unit else None
-    if not is_pengelola(user) or not unit or not unit.active or not permission or not permission.is_allowed:
+    if not is_pengelola(user) or not unit or not unit.active:
         raise HTTPException(403, "Penugasan Riska/unit tidak aktif")
+    return unit
+
+
+async def operation_unit(session, user, unit_id=None):
+    await current_assignment(session, user, lock=True)
+    if public_role(user.role) not in WRITE_LEVEL:
+        raise HTTPException(403, "Role Anda hanya dapat membaca data")
+    if is_pengelola(user):
+        if unit_id and unit_id != user.unit_usaha_id:
+            raise HTTPException(403, "Akses unit lain ditolak")
+        return await manager_unit(session, user)
+    unit = await session.scalar(select(UnitUsaha).where(UnitUsaha.id == unit_id).with_for_update())
+    if not unit or not unit.active:
+        raise HTTPException(404, "Pilih satu unit aktif untuk input operasional")
     return unit
 
 
@@ -202,12 +247,13 @@ class ScopedFinance(SiabumdesPublicService):
 
 
 @router.post("/drafts")
-async def draft(body: DraftIn, user: User = Depends(require_roles("pengelola")), session: AsyncSession = Depends(get_db)):
-    unit = await manager_unit(session, user)
+async def draft(body: DraftIn, user: User = Depends(require_roles(*WRITE_LEVEL)), session: AsyncSession = Depends(get_db)):
+    unit = await operation_unit(session, user, body.unit_usaha_id)
     try:
         payload, preview = await prepare(session, user, unit, parse_operation(body.message))
     except (ValueError, ArithmeticError):
         raise HTTPException(422, "Format tanggal, bulan, tahun atau qty tidak valid") from None
+    payload = await bind_payload(session, user, payload)
     row = RiskaDraft(user_id=user.id, unit_usaha_id=unit.id, payload=payload, preview=preview,
                      expires_at=datetime.now(timezone.utc) + timedelta(minutes=10))
     session.add(row)
@@ -217,16 +263,29 @@ async def draft(body: DraftIn, user: User = Depends(require_roles("pengelola")),
 
 
 @router.post("/drafts/{draft_id}/execute")
-async def execute(draft_id: str, user: User = Depends(require_roles("pengelola")), session: AsyncSession = Depends(get_db)):
-    unit = await manager_unit(session, user)
-    row = await session.scalar(select(RiskaDraft).where(RiskaDraft.id == draft_id, RiskaDraft.user_id == user.id,
-                               RiskaDraft.unit_usaha_id == unit.id).with_for_update())
+async def execute(draft_id: str, user: User = Depends(require_roles(*WRITE_LEVEL)), session: AsyncSession = Depends(get_db),
+                  request: Request = None):
+    await current_assignment(session, user, lock=True)
+    from modules.siabumdes.adapters.api.v1.riska_dialogue import execute_strategy, expired
+    row = await session.scalar(select(RiskaDraft).where(RiskaDraft.id == draft_id, RiskaDraft.user_id == user.id)
+                               .with_for_update())
     if not row:
         raise HTTPException(404, "Draf tidak ditemukan")
-    if row.consumed or row.expires_at <= datetime.now(timezone.utc):
+    if expired(row):
         raise HTTPException(409, "Draf sudah digunakan/dibatalkan/kedaluwarsa")
+    await validate_draft_session(session, user, row)
+    if row.payload.get("kind") == "assignment":
+        from modules.siabumdes.adapters.api.v1.riska_assignment import execute_assignment
+        return await execute_assignment(session, user, row)
+    if row.payload.get("kind") == "strategic":
+        return await execute_strategy(session, user, row, request)
+    if row.payload.get("kind") == "dialogue":
+        raise HTTPException(409, "Lengkapi data sebelum eksekusi")
+    unit = await operation_unit(session, user, row.unit_usaha_id)
     try:
-        payload, preview = await prepare(session, user, unit, row.payload)
+        source = {k: v for k, v in row.payload.items() if not k.startswith("_")}
+        payload, preview = await prepare(session, user, unit, source)
+        payload = await bind_payload(session, user, payload)
         if preview != row.preview or payload != row.payload:
             raise HTTPException(409, "Data/COA berubah; buat dan periksa draf baru")
         action = payload["action"]
@@ -255,18 +314,19 @@ async def execute(draft_id: str, user: User = Depends(require_roles("pengelola")
                            detail=f"{unit.code}: {payload['action']}")
     except (ValueError, ArithmeticError):
         raise HTTPException(422, "Data operasional tidak valid; periksa COA dan stok") from None
-    return {"message": "Transaksi dan jurnal berhasil dicatat pada unit Anda."}
+    return await offer_more(session, user, {"message": "Transaksi dan jurnal berhasil dicatat. Ada hal lain yang bisa Riska bantu? ✨", "refresh_required": True})
 
 
 @router.delete("/drafts/{draft_id}")
-async def cancel(draft_id: str, user: User = Depends(require_roles("pengelola")), session: AsyncSession = Depends(get_db)):
-    unit = await manager_unit(session, user)
-    row = await session.scalar(select(RiskaDraft).where(RiskaDraft.id == draft_id, RiskaDraft.user_id == user.id,
-                               RiskaDraft.unit_usaha_id == unit.id).with_for_update())
+async def cancel(draft_id: str, user: User = Depends(require_roles(*WRITE_LEVEL)), session: AsyncSession = Depends(get_db)):
+    await current_assignment(session, user, lock=True)
+    row = await session.scalar(select(RiskaDraft).where(RiskaDraft.id == draft_id, RiskaDraft.user_id == user.id)
+                               .with_for_update())
     if not row or row.consumed:
         raise HTTPException(409, "Draf tidak tersedia")
+    await validate_draft_session(session, user, row)
     row.consumed = True
-    return {"message": "Draf dibatalkan."}
+    return await offer_more(session, user, {"message": "Draf dibatalkan. Ada hal lain yang bisa Riska bantu? ✨"})
 
 
 async def special_table(session, unit, message):

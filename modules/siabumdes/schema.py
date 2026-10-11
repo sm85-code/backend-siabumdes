@@ -71,6 +71,14 @@ async def _safe_exec(conn, sql: str, label: str) -> bool:
 async def ensure_schema() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Riska central drafts/dialogue have no unit FK. Existing deployments do not run Alembic on boot.
+        await _safe_exec(conn, "ALTER TABLE riska_drafts ALTER COLUMN unit_usaha_id DROP NOT NULL",
+                         "allow central Riska drafts")
+        from modules.siabumdes.application.riska_migration import LEGACY_ASSIGNMENTS, CONSUME_LEGACY_GRANTS
+        # The two statements must commit together; never restore a finished session at restart.
+        async with conn.begin_nested():
+            await conn.execute(text(LEGACY_ASSIGNMENTS))
+            await conn.execute(text(CONSUME_LEGACY_GRANTS))
         for table, column, new_type in _WIDEN:
             await _safe_exec(
                 conn,

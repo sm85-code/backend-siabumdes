@@ -17,7 +17,7 @@ jobs:
           cache: "pip"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt 'httpx>=0.27,<1'
 
       - name: Lint (ruff)
         run: ruff check .
@@ -56,7 +56,7 @@ jobs:
           cache: "pip"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt 'httpx>=0.27,<1'
 
       - name: Postgres integration tests
         env:
@@ -66,4 +66,4 @@ jobs:
           # skips itself instead of running.
           POSTGRES_SSL: "false"
           RISKA_TEST_DATABASE_URL: postgresql+asyncpg://siabumdes:siabumdes@localhost:5432/siabumdes_test
-        run: python -m pytest tests/test_postgresql_integration.py tests/test_b1_stock_atomicity.py tests/test_riska_execution_pg.py -n 0
+        run: python -m pytest tests/test_postgresql_integration.py tests/test_b1_stock_atomicity.py tests/test_riska_execution_pg.py tests/test_riska_dialogue_pg.py -n 0

@@ -160,8 +160,23 @@ class RiskaDraft(Base):
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=_uuid)
     user_id: Mapped[str] = mapped_column(String(64), ForeignKey("users.id"), nullable=False)
-    unit_usaha_id: Mapped[str] = mapped_column(String(64), ForeignKey("unit_usaha.id"), nullable=False)
+    unit_usaha_id: Mapped[Optional[str]] = mapped_column(String(64), ForeignKey("unit_usaha.id"), nullable=True)
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
     preview: Mapped[dict] = mapped_column(JSONB, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     consumed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class RiskaAssignment(Base):
+    """One replaceable session per recipient; session_id invalidates old drafts."""
+    __tablename__ = "riska_assignments"
+
+    user_id: Mapped[str] = mapped_column(String(64), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    session_id: Mapped[str] = mapped_column(String(64), nullable=False, default=_uuid)
+    assigned_by: Mapped[Optional[str]] = mapped_column(String(64), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    role: Mapped[str] = mapped_column(String(64), nullable=False)
+    unit_usaha_id: Mapped[Optional[str]] = mapped_column(String(64), ForeignKey("unit_usaha.id"), nullable=True)
+    awaiting_finish: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

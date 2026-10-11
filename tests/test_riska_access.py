@@ -12,20 +12,19 @@ from modules.siabumdes.adapters.api.v1.riska import ChatIn, DENIED, chat
 
 @pytest.mark.asyncio
 async def test_revoked_assignment_blocks_chat():
-    user = SimpleNamespace(role="pengelola", unit_usaha_id="own", riska_enabled=False)
-    session = SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(id="own", active=True, is_allowed=False)))
+    user = SimpleNamespace(role="pengelola", id="test", unit_usaha_id="own", riska_enabled=False)
+    session = SimpleNamespace(scalar=AsyncMock(return_value=None))
     with pytest.raises(HTTPException) as error:
-        await chat(ChatIn(message="saldo kas"), user, session)
+        await chat(ChatIn(session_id="test-session", message="saldo kas"), user, session)
     assert error.value.status_code == 403
 
 
 @pytest.mark.asyncio
 async def test_cross_unit_and_macro_requests_denied():
-    user = SimpleNamespace(role="pengelola", unit_usaha_id="own", riska_enabled=True)
-    session = SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(id="own", active=True, is_allowed=True)))
+    user = SimpleNamespace(role="pengelola", id="test", unit_usaha_id="own", riska_enabled=True)
+    session = SimpleNamespace(flush=AsyncMock(), scalar=AsyncMock(return_value=SimpleNamespace(active=True, role="pengelola", unit_usaha_id="own", session_id="test-session")), get=AsyncMock(return_value=SimpleNamespace(id="own", active=True)))
     with pytest.raises(HTTPException) as error:
-        await chat(ChatIn(message="saldo kas", unit_usaha_id="other"), user, session)
+        await chat(ChatIn(session_id="test-session", message="saldo kas", unit_usaha_id="other"), user, session)
     assert error.value.status_code == 403
-    result = await chat(ChatIn(message="transfer bagi hasil"), user, session)
+    result = await chat(ChatIn(session_id="test-session", message="transfer bagi hasil"), user, session)
     assert result["message"] == DENIED
-    assert session.get.await_count == 4

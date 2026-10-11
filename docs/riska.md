@@ -1,22 +1,60 @@
-# Riska operational contract
+# Riska — kontrak bantuan internal
 
-Riska uses deterministic commands and existing services; it never calls an LLM. Select an entity explicitly for reports. Unit managers can only use their own active unit with an allowed `ai_session_permissions` row. Missing permission denies access. The old per-user `users.riska_enabled` column is retained for compatibility but no longer controls access.
+Riska memakai parser Bahasa Indonesia deterministik dan service SIABUMDES yang ada. Tidak ada panggilan LLM atau SQL dari teks pengguna. Hak akses diambil dari pengguna login di database, bukan `user_role` dalam payload.
 
-Admins manage all current units at `/api/v1/admin/riska-permissions` (GET/PATCH). The frontend page `/riska-permissions` is admin-only. Permission changes are audited and effective on every backend request; open widgets refresh visibility every 30 seconds.
+## Penugasan pengguna
 
-Managers create server-owned drafts through POST `/api/riska/drafts`. Exact command examples (replace identifiers and dates):
+Admin selalu dapat memakai Riska. Pengguna lain memerlukan penugasan aktif **per pengguna** di `riska_assignments`, termasuk direktur, bendahara, pengelola, pengawas, dan penasihat. Hak pengguna penerima tetap berlaku: penugasan tidak meminjamkan hak Admin. Pengelola dibatasi ke unit aktifnya; pengawas/penasihat tetap baca saja.
 
-- `imbal mitra=ID tanggal=2026-10-11 bulan=10 tahun=2026 nominal=300`
-- `masuk produk=SKU qty=2 harga=100 pemasok=ID tanggal=2026-10-11`
-- `keluar produk=SKU qty=1 harga=150 customer=ID tanggal=2026-10-11`
-- `rusak produk=SKU qty=1 tanggal=2026-10-11`
+Admin dapat memakai halaman `/riska-permissions` atau chat:
 
-Nominal uses a decimal point without thousands separators. Quote SKUs with spaces. Stock commands currently use cash settlement; use the existing inventory forms for credit purchases/sales, internal consumption or other adjustments. Yield drafts add a new payment; existing month records must be edited in the existing Imbal Hasil page.
+- `aktifkan dirimu di pengelola 4`
+- `aktifkan Riska untuk [username atau nama lengkap]`
+- `nonaktifkan Riska untuk [username atau nama lengkap]`
 
-Drafts expire after 10 minutes. POST `/api/riska/drafts/{id}/execute` confirms; DELETE cancels. Ownership, current permission, active unit, period locks, stock, counterparties and scoped active COA are revalidated. Posting and consuming the draft commit together. Replay returns 409. Changed account/amount previews require a new draft. Network ambiguity must be checked in the transaction page; retrying the same draft cannot post twice.
+Chat menampilkan pengguna, role, cakupan, dan konfirmasi sebelum perubahan. Jika lebih dari satu pengguna cocok, Riska meminta nama/username yang pasti. “Pengelola 4” diselesaikan dari kode unit aktif UU04 di database, bukan nama seed. Pengguna baru atau perubahan role/unit membutuhkan penugasan eksplisit.
 
-UU04 uses its configured `pendapatan_bagi_hasil_unit4` transaction type (canonical seed cash 1.1.01.14, income 4.1.01.24). Trade uses unit-scoped COA: canonical UU05/UU06 inventory/cash/HPP/revenue suffix 15/16. Damaged stock uses scoped transit 1.1.05.51 and loss 6.2.99.52. Missing or ambiguous accounts fail closed, rather than borrowing another unit's account. New trade units require an unambiguous scoped operational chart. Existing adjustment service defaults are unchanged; Riska supplies the selected unit's accounts.
+API Admin: GET/PATCH `/api/v1/admin/riska-assignments`; PATCH `{user_id,is_allowed}`. Endpoint lama `/api/v1/admin/riska-permissions` dipertahankan untuk pemberian/pencabutan bantuan secara eksplisit kepada pengelola dalam satu unit. Ini bukan sumber otorisasi runtime.
 
-Queries `mitra`/`imbal` show UU04 capital and current-year monthly receipts (missing is not zero). `stok`/`persediaan` show valuation and counterparties; `stok tipis` filters quantity <=5. These are distinct from consolidated profit or loan principal balances.
+Widget berada di Layout halaman terautentikasi. Visibilitas diperiksa setiap 30 detik; backend memeriksa izin pada setiap permintaan. Tombol X hanya meminimalkan. “Akhiri sesi bantuan” menawarkan “Masih ada” dan “Tidak, selesai”; pilihan selesai memanggil POST `/api/riska/session/finish` dengan `session_id`, membatalkan draf yang belum disimpan, lalu menyembunyikan widget. Teks `tidak, selesai`, `sudah selesai`, `cukup`, atau `tidak ada lagi` juga mengakhiri sesi sementara. Jawaban pendek `tidak`, `nggak`, `enggak`, atau `tidak ada` mengakhiri sesi hanya setelah Riska menawarkan bantuan lanjutan; saat pengisian draf, jawaban negatif membatalkan pengisian. Admin dapat menugaskan kembali.
 
-Models/migrations add `ai_session_permissions` and `riska_drafts`; startup `ensure_schema()` registers them through existing create_all. No production data is seeded by Riska. The initial workbook may not include loss/transit accounts, and freshly seeded trade units can still default to jasa: admins must configure live unit types and COA. Production Neon access was unavailable during implementation. Verification used isolated local PostgreSQL and browser sessions; no production financial records were changed.
+## Bahasa sederhana dan konfirmasi
+
+POST `/api/riska/chat`: `{message,unit_usaha_id?,conversation_id?,session_id?}`. `session_id` wajib cocok untuk pengguna yang ditugaskan. Data yang belum lengkap diminta satu per satu; respons membawa `conversation_id` milik pengguna, berlaku 10 menit. Teks `batal` membatalkan pengisian, bukan sesi bantuan.
+
+Contoh:
+
+- `cek saldo kas`
+- `berapa pendapatan bulan ini?`
+- `laba rugi September 2026`
+- `laba rugi unit toko dan unit air September 2026` (nama diselesaikan dari database; pengelola tidak boleh lintas unit)
+- `input barang masuk produk Daster Arab Jumbo sebanyak 5 pcs harga 20 ribu dari pemasok Toko Makmur kemarin`
+- `input barang keluar produk Daster Arab Jumbo sebanyak 2 pcs harga 30 ribu untuk pelanggan Bu Ani hari ini`
+- `catat barang rusak produk Daster Arab Jumbo sebanyak 1 pcs tanggal 10 Oktober 2026`
+- `catat setoran imbal hasil mitra Bu Ani nominal 300 ribu bulan oktober tahun 2026 hari ini`
+
+Nama/ID/SKU diselesaikan dalam unit terpilih. Nama pendek hanya diterima jika cocok tunggal; nama ganda meminta klarifikasi. Tanda kutip boleh dipakai untuk nama panjang. Nominal mendukung `20000`, `20.000`, `20 ribu`, `20ribu`, `1,5 juta`. Harga stok selalu **per barang**, bukan total. Tanggal mendukung ISO, `10-10-2026`, `10/10/2026`, `10 Oktober 2026`, `hari ini`, dan `kemarin`, dengan zona waktu Jakarta. Tanggal yang belum lengkap tidak ditebak. Format `key=value` lama tetap didukung.
+
+Harga, qty, periode dan tanggal ganda/bertentangan tidak ditebak. Tidak ada pencatatan ketika Riska masih meminta data. Draf final menampilkan rincian dan jurnal sebelum konfirmasi. POST `/api/riska/drafts/{id}/execute` mengeksekusi; DELETE membatalkan. Posting, audit, dan konsumsi draf berada dalam satu transaksi. Draf terikat pada pemilik, role, dan identitas sesi; pencabutan, akhir sesi, atau penugasan baru menolak konfirmasi lama. Stok/COA/nominal diverifikasi ulang. Jika respons jaringan terputus, periksa transaksi; jangan membuat draf pengganti tanpa mengecek hasil.
+
+## Aksi yang terhubung pada tahap ini
+
+| Kemampuan | Cakupan |
+| --- | --- |
+| Saldo kas/bank, pendapatan, laba rugi, perbandingan unit | REPORT_READ_LEVEL sesuai akses entitas; periode eksplisit didukung |
+| Imbal hasil baru | WRITE_LEVEL, UU04, service `save_linked_payment()` |
+| Barang masuk/keluar tunai dan opname barang rusak | WRITE_LEVEL, unit perdagangan/manufaktur, service InventoryService |
+| Tutup buku, kunci periode, transfer bagi hasil | Admin, satu entitas/periode per konfirmasi, workflow resmi period_close_router |
+| Penugasan/pencabutan Riska per pengguna | Admin, konfirmasi dalam chat atau saklar halaman kontrol |
+
+Gabungan laba merupakan ringkasan analitis **tanpa eliminasi antarentitas**, bukan konsolidasi akuntansi resmi. Pembukuan tidak digabung. Workflow Admin tetap mematuhi tutup buku, aturan transfer, dan konfigurasi proporsi pembagian yang sudah ada. Draf strategis disimulasikan dalam savepoint dan di-rollback; eksekusi nyata membandingkan hasil dengan draf sebelum commit.
+
+`mitra` menampilkan register modal dan pembayaran Jan–Des tahun berjalan UU04; modal register bukan saldo piutang. `stok` menampilkan qty dan valuasi Qty × cost_price register; bukan jaminan saldo buku besar persediaan. `stok tipis` memfilter Qty ≤ 5.
+
+**Batas tahap ini:** seluruh CRUD Admin belum otomatis tersedia lewat chat. Input/ubah/hapus transaksi umum, COA, pengguna, unit, produk, dan ubah pembayaran yang sudah ada masih melalui halaman resmi. Pintasan navigasi diberi label sebagai navigasi, bukan eksekusi chat. Adapter berikutnya harus memanggil workflow resmi dan menambahkan kontrak draf serta pemeriksaan hak akses; jangan mengeksekusi endpoint arbitrer dari teks.
+
+## Migrasi dan verifikasi
+
+Alembic 16 mengizinkan draf Pusat tanpa unit FK. Alembic 17 menambahkan `riska_assignments`. Startup `ensure_schema()` memakai jalur create_all yang sudah ada dan migrasi grant lama dalam transaksi. Grant lama hanya disalin bagi pengelola aktif/unit aktif, kemudian flag lama dikonsumsi. Record sesi yang sudah selesai tidak diaktifkan lagi saat restart. `users.riska_enabled` tidak menjadi sumber izin.
+
+Tidak ada perubahan data keuangan Neon selama pengujian. Verifikasi memakai skema/database PostgreSQL lokal terisolasi, pengujian hak akses/replay, migrasi 15→17, dan browser dengan API tiruan untuk tampilan serta konfirmasi.

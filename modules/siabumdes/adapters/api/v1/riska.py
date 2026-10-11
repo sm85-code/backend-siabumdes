@@ -1,5 +1,5 @@
 """Deterministic financial assistant. No external model calls."""
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 import re
 from typing import Literal
 
@@ -28,6 +28,7 @@ class ChatIn(BaseModel):
     conversation_id: str | None = None
     session_id: str | None = None
     ai_mode: Literal['auto', 'internal', 'sol', 'sonnet'] = 'auto'
+    ai_conversation_id: str | None = Field(default=None, max_length=64)
 
 
 async def available(session, user):
@@ -80,37 +81,104 @@ async def chat(body: ChatIn, user: User = Depends(READ), session: AsyncSession =
     if assignment and re.fullmatch(r"(?:tidak[, ]+)?(?:selesai|sudah selesai|cukup|tidak ada lagi)[.! ]*", body.message.strip().lower()):
         return await finish_assignment(session, user, assignment.session_id)
     from modules.siabumdes.adapters.api.v1.riska_dialogue import handle_chat
-    result = await handle_chat(body, user, session, request)
-    if not body.conversation_id and not result.get('draft_id') and not result.get('conversation_id') and body.ai_mode != 'internal':
-        from modules.siabumdes.application import riska_ai
-        provider = body.ai_mode if body.ai_mode in {'sol', 'sonnet'} else 'sol' if riska_ai.ready('sol') else 'sonnet'
-        analyze = (body.ai_mode in {'sol', 'sonnet'} or re.search(r'\b(?:analisis|analisa|evaluasi|ringkas|jelaskan)\b', body.message, re.I)) and result.get('rows') is not None
-        if riska_ai.ready(provider) and (result.get('unrecognized') or analyze):
-            before = (user.role, user.unit_usaha_id, user.session_version)
-            interpretation, usage = await riska_ai.interpret(user, body.message, provider, result if analyze else None)
-            await session.refresh(user)
-            if not user.active or before != (user.role, user.unit_usaha_id, user.session_version):
-                raise HTTPException(409, 'Hak akses berubah. Silakan masuk kembali sebelum melanjutkan.')
-            await current_assignment(session, user, lock=True)
-            if analyze:
-                result['message'] += '\n\n' + interpretation.reply
-            elif interpretation.action == 'command':
-                from .riska_crud import parse_command
-                from modules.siabumdes.application.riska_language import intent
-                command = parse_command(interpretation.command)
-                action = intent(interpretation.command)
-                write = command and command[1] != 'read' or action in {'masuk', 'keluar', 'rusak', 'imbal', 'close', 'lock', 'transfer'} or re.search(r'\b(?:aktifkan|nonaktifkan)\b', interpretation.command, re.I)
-                requested_write = re.search(r'\b(?:tambah|tambahin|buat|bikinkan|bikinin|input|catat|masukkan|masukin|ubah|edit|koreksi|hapus|hapuskan|buang|aktifkan|nonaktifkan|tutup|kunci|transfer|bekukan|setor|bayar|beli|jual|rusak)\b', body.message, re.I)
-                if write and (not requested_write or re.search(r'\b(?:jangan|bukan|tidak|batalkan)\b', body.message, re.I)):
-                    result = {'message': 'Saya bisa membantu memeriksa datanya terlebih dahulu. Jika Anda ingin mengubah data, mohon sebutkan tindakan yang diinginkan; perubahan tetap menunggu konfirmasi Anda.'}
-                elif command or action != 'unknown' or re.search(r'\b(?:aktifkan|nonaktifkan)\b', interpretation.command, re.I):
-                    result = await handle_chat(body.model_copy(update={'message': interpretation.command, 'ai_mode': 'internal'}), user, session, request)
-                    result['message'] = 'Baik, saya memahami permintaan Anda sebagai: “' + interpretation.command + '”.\n\n' + result['message']
-                else:
-                    result = {'message': interpretation.reply or 'Boleh jelaskan data atau tindakan yang Anda maksud? Saya bantu langkah demi langkah.'}
-            else:
-                result = {'message': interpretation.reply or 'Boleh ceritakan bagian pekerjaan yang ingin saya bantu?'}
-            result['ai'] = usage
+    from modules.siabumdes.adapters.api.v1.riska_dialogue import store, expired
+    from modules.siabumdes.identity.infrastructure.models import RiskaDraft
+    from modules.siabumdes.application.riska_sessions import validate_draft_session
+    history = None
+    scope_id = user.unit_usaha_id if is_pengelola(user) else body.unit_usaha_id
+    if body.ai_conversation_id:
+        history = await session.scalar(select(RiskaDraft).where(RiskaDraft.id == body.ai_conversation_id, RiskaDraft.user_id == user.id).with_for_update())
+        if not history or expired(history) or history.payload.get('kind') != 'ai_history':
+            raise HTTPException(409, 'Percakapan AI sudah berakhir. Silakan kirim kembali permintaan Anda.')
+        await validate_draft_session(session, user, history)
+        if history.payload.get('auth_session_version') != user.session_version:
+            raise HTTPException(409, 'Sesi login berubah. Mulai percakapan baru.')
+        if history.unit_usaha_id != scope_id:
+            raise HTTPException(409, 'Entitas percakapan berubah. Mulai percakapan baru untuk entitas yang dipilih.')
+    from modules.siabumdes.application import riska_ai
+    from .riska_crud import parse_command
+    from modules.siabumdes.application.riska_language import intent
+    provider = body.ai_mode if body.ai_mode in {'sol', 'sonnet'} else 'sol' if riska_ai.ready('sol') else 'sonnet'
+    context = {'laporan': history.payload.get('report') if history else None, 'percakapan': history.payload.get('messages', []) if history else []}
+    available_units = select(UnitUsaha).where(UnitUsaha.active.is_(True)).order_by(UnitUsaha.code).limit(100)
+    if is_pengelola(user):
+        available_units = available_units.where(UnitUsaha.id == user.unit_usaha_id)
+    context['unit_tersedia'] = [{'code': unit.code, 'name': unit.name, 'business_type': unit.business_type} for unit in (await session.scalars(available_units)).all()]
+    selected_entity = await session.get(UnitUsaha, scope_id) if scope_id else None
+    if scope_id and (not selected_entity or not selected_entity.active):
+        raise HTTPException(403, 'Entitas yang dipilih tidak aktif atau tidak tersedia.')
+    context['entitas_terpilih'] = {'code': selected_entity.code, 'name': selected_entity.name} if selected_entity else {'code': 'BUMDES', 'name': 'BUMDES Pusat'}
+    if re.search(r'\b(?:transaksi|akun|coa)\b', body.message, re.I) and not body.conversation_id:
+        from modules.siabumdes.infrastructure.models import Account, TransactionType
+        from .riska_dialogue import resolve_units
+        try:
+            chosen, pusat = await resolve_units(session, body.message, scope_id, user.unit_usaha_id if is_pengelola(user) else None)
+        except ValueError:
+            chosen, pusat = [], True
+        if len(chosen) <= 1:
+            group = chosen[0].code if chosen else 'BUMDES'
+            context['jenis_transaksi'] = [{'code': kind.code, 'name': kind.name, 'debit': kind.debit, 'kredit': kind.credit} for kind in (await session.scalars(select(TransactionType).where(TransactionType.group_code == group).limit(30))).all()]
+            context['akun_tersedia'] = [{'code': account.code, 'name': account.name} for account in (await session.scalars(select(Account).where(Account.group_code == group, Account.active.is_(True)).limit(30))).all()]
+    before = (user.role, user.unit_usaha_id, user.session_version)
+    usage = None
+
+    async def ask(data):
+        response = await riska_ai.interpret(user, body.message, provider, data)
+        await session.refresh(user)
+        if not user.active or before != (user.role, user.unit_usaha_id, user.session_version):
+            raise HTTPException(409, 'Hak akses berubah. Silakan masuk kembali sebelum melanjutkan.')
+        await current_assignment(session, user, lock=True)
+        return response
+
+    async def dispatch(interpretation):
+        if interpretation.action != 'command':
+            if intent(body.message) in {'cash', 'profit'} and not body.conversation_id:
+                return await handle_chat(body, user, session, request)
+            return {'message': interpretation.reply or 'Boleh ceritakan bagian pekerjaan yang ingin saya bantu?'}
+        command = parse_command(interpretation.command)
+        action = intent(interpretation.command)
+        write = command and command[1] != 'read' or action in {'masuk', 'keluar', 'rusak', 'imbal', 'close', 'lock', 'transfer'} or re.search(r'\b(?:aktifkan|nonaktifkan)\b', interpretation.command, re.I)
+        requested_write = re.search(r'\b(?:tambah|tambahin|buat|bikinkan|bikinin|input|catat|masukkan|masukin|ubah|edit|koreksi|hapus|hapuskan|buang|aktifkan|nonaktifkan|tutup|kunci|transfer|bekukan|setor|bayar|beli|jual|rusak)\b', body.message, re.I)
+        if write and (not requested_write or re.search(r'\b(?:jangan|bukan|tidak|batalkan)\b', body.message, re.I)):
+            return {'message': 'Saya bisa membantu memeriksa datanya terlebih dahulu. Jika Anda ingin mengubah data, mohon sebutkan tindakan yang diinginkan; perubahan tetap menunggu konfirmasi Anda.'}
+        if not (command or action != 'unknown' or re.search(r'\b(?:aktifkan|nonaktifkan)\b', interpretation.command, re.I)):
+            return {'message': interpretation.reply or 'Boleh jelaskan data atau tindakan yang Anda maksud? Saya bantu langkah demi langkah.'}
+        return await handle_chat(body.model_copy(update={'message': interpretation.command, 'ai_mode': 'internal'}), user, session, request)
+
+    # Explicit model mode understands the whole request before internal dispatch.
+    if body.ai_mode in {'sol', 'sonnet'} and not body.conversation_id and riska_ai.ready(provider):
+        interpretation, usage = await ask(context)
+        result = await dispatch(interpretation)
+    else:
+        result = await handle_chat(body, user, session, request)
+        if result.get('unrecognized') and not result.get('conversation_id') and body.ai_mode != 'internal' and riska_ai.ready(provider):
+            interpretation, usage = await ask(context)
+            result = await dispatch(interpretation)
+    source_report = None
+    if result.get('rows') is not None:
+        source_report = {'rows': result['rows'][:20], 'money_columns': result.get('money_columns', []), 'periode_dan_cakupan': result['message'], 'jumlah_baris': len(result['rows'])}
+        wants_analysis = body.ai_mode in {'sol', 'sonnet'} or re.search(r'\b(?:analisis|analisa|evaluasi|ringkas|jelaskan)\b', body.message, re.I)
+        if body.ai_mode != 'internal' and wants_analysis and riska_ai.ready(provider):
+            try:
+                explanation, usage = await ask({'unit_tersedia': context['unit_tersedia'], 'entitas_terpilih': context['entitas_terpilih'], 'laporan': source_report, 'percakapan': context['percakapan'], 'tugas': 'Jelaskan hasil pembacaan resmi ini; jangan meminta pembacaan atau tindakan lain.'})
+                result['message'] += '\n\n' + explanation.reply
+            except HTTPException as exc:
+                if exc.status_code not in {429, 503}:
+                    raise
+                result['message'] += '\n\nLaporannya sudah tersedia. Bantuan penjelasan AI belum tersedia saat ini; data resmi tetap bisa Anda periksa di tabel.'
+    if usage is not None:
+        result['ai'] = usage
+        messages = context['percakapan'] + [{'user': body.message, 'riska': result['message'][:1200]}]
+        payload = {'kind': 'ai_history', 'messages': messages[-3:], 'report': source_report or context['laporan'], 'auth_session_version': user.session_version}
+        if re.search(r'password|kata sandi|api[_ ]key', body.message, re.I):
+            payload['messages'] = context['percakapan']
+        if history:
+            from modules.siabumdes.application.riska_sessions import bind_payload
+            history.payload = await bind_payload(session, user, payload)
+        else:
+            history = await store(session, user, scope_id, payload, {})
+        history.expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+        result['ai_conversation_id'] = history.id
     if result.get('rows') and 'Ada hal lain' not in result['message']:
         result['message'] += ' Ada hal lain yang bisa Riska bantu? ✨'
     return await offer_more(session, user, result)

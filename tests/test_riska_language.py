@@ -48,3 +48,9 @@ def test_conflicting_relative_and_explicit_dates_are_not_guessed():
     assert extract_operation('tanggal 10', 'masuk', TODAY, 'tanggal') == {}
     with pytest.raises(ValueError):
         extract_operation('31 Februari 2026', 'masuk', TODAY, 'tanggal')
+
+
+def test_annual_reports_use_jakarta_today_and_previous_full_year():
+    assert report_range('jelaskan laba rugi tahun ini', TODAY) == (date(TODAY.year, 1, 1), TODAY)
+    assert report_range('laba rugi tahun lalu', TODAY) == (date(TODAY.year-1, 1, 1), date(TODAY.year-1, 12, 31))
+    assert report_range(str(TODAY.year), TODAY) == (date(TODAY.year, 1, 1), TODAY)

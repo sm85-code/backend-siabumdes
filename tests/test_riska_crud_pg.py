@@ -318,3 +318,77 @@ async def test_wrong_partner_entity_requests_entity_not_repair_fields(crud_conte
     direct = await talk(session, admin, 'tambah mitra Bu Ani modal 1 juta ke UU04', [], toko)
     assert direct.get('draft_id'), direct
     assert direct['preview']['unit'] == air.name
+
+
+@pytest.mark.asyncio
+async def test_report_period_followup_retains_original_question(crud_context):
+    session, admin, _, _, toko, *_ = crud_context
+    first = await talk(session, admin, 'laba rugi tahun', [], toko)
+    assert first.get('conversation_id'), first
+    reply = await chat(ChatIn(message='2026', conversation_id=first['conversation_id'], unit_usaha_id=toko.id, ai_mode='internal'), admin, session)
+    assert reply.get('rows') is not None and not reply.get('conversation_id'), reply
+    assert '2026-01-01' in reply['message']
+    assert (await session.get(RiskaDraft, first['conversation_id'])).consumed
+
+
+@pytest.mark.asyncio
+async def test_ai_followup_has_official_report_and_owned_history(crud_context, monkeypatch):
+    from unittest.mock import AsyncMock
+    from modules.siabumdes.application import riska_ai
+    session, admin, _, other, toko, *_ = crud_context
+    monkeypatch.setattr(riska_ai, 'ready', lambda provider: True)
+    mocked = AsyncMock(return_value=(riska_ai.Interpretation(action='explain', command='', reply='Berikut penjelasan laporan Anda.'), {'model': 'mock-sol'}))
+    monkeypatch.setattr(riska_ai, 'interpret', mocked)
+    first = await chat(ChatIn(message='jelaskan laba rugi tahun ini', unit_usaha_id=toko.id, ai_mode='sol'), admin, session)
+    assert first.get('rows') and first.get('ai_conversation_id')
+    follow = await chat(ChatIn(message='mengapa hasilnya begitu?', unit_usaha_id=toko.id, ai_mode='sol', ai_conversation_id=first['ai_conversation_id']), admin, session)
+    context = mocked.call_args.args[3]
+    assert context['laporan']['rows'] == first['rows']
+    assert context['percakapan'][0]['user'] == 'jelaskan laba rugi tahun ini'
+    assert follow['ai_conversation_id'] == first['ai_conversation_id']
+    with pytest.raises(HTTPException):
+        await chat(ChatIn(message='mengapa?', unit_usaha_id=toko.id, ai_mode='sol', ai_conversation_id=first['ai_conversation_id']), other, session)
+
+
+@pytest.mark.asyncio
+async def test_complete_transaction_instruction_does_not_reask_known_fields(crud_context, monkeypatch):
+    import json
+    from unittest.mock import AsyncMock
+    from modules.siabumdes.application import riska_ai
+    session, admin, _, _, toko, *_ = crud_context
+    session.add(TransactionType(code='sale', name='Penjualan', debit='1.1.01.15', credit='4.1.01.15', group_code=toko.code))
+    await session.flush()
+    command = 'tambah transaksi ' + json.dumps({'date': 'hari ini', 'transaction_type': 'Penjualan', 'description': 'Penjualan Baru', 'amount': '50 ribu', 'debit_account_code': '1.1.01.15', 'credit_account_code': '4.1.01.15', 'entitas': 'UU05'})
+    monkeypatch.setattr(riska_ai, 'ready', lambda provider: True)
+    monkeypatch.setattr(riska_ai, 'interpret', AsyncMock(return_value=(riska_ai.Interpretation(action='command', command=command, reply='Baik, saya siapkan drafnya.'), {'model': 'mock-sol'})))
+    before = await session.scalar(select(func.count(Transaction.id)))
+    reply = await chat(ChatIn(message='Input transaksi Penjualan hari ini, Penjualan Baru, nominal 50 ribu, debit 1.1.01.15 kredit 4.1.01.15 untuk UU05', ai_mode='sol', unit_usaha_id=toko.id), admin, session)
+    assert reply.get('draft_id') and not reply.get('conversation_id'), reply
+    assert await session.scalar(select(func.count(Transaction.id))) == before
+    await execute(reply['draft_id'], admin, session)
+    assert await session.scalar(select(func.count(Transaction.id))) == before + 1
+
+
+@pytest.mark.asyncio
+async def test_six_unit_analysis_keeps_central_revenue_separate(crud_context):
+    session, admin, _, _, toko, air, *_ = crud_context
+    for number in (1, 2, 3, 6):
+        session.add(UnitUsaha(code=f'UU{number:02}', name=f'Unit Tes {number}', business_type='jasa', active=True))
+    await session.flush()
+    losing_unit = await session.scalar(select(UnitUsaha).where(UnitUsaha.code == 'UU01'))
+    session.add(Account(code='LOSS-EXP', name='Beban Operasional Tes', category='beban', subcategory='operasional', normal_balance='debit', group_code=losing_unit.code, unit_usaha_id=losing_unit.id))
+    session.add(Account(code='LOSS-CASH', name='Kas Tes', category='aset', subcategory='kas_bank', normal_balance='debit', group_code=losing_unit.code, unit_usaha_id=losing_unit.id))
+    from datetime import date
+    session.add(Transaction(date=date(2026, 9, 15), amount=Decimal('100000'), transaction_type='expense', debit_account_code='LOSS-EXP', credit_account_code='LOSS-CASH', unit_usaha_id=losing_unit.id, description='Beban operasional', created_by=admin.id))
+    await session.flush()
+    reply = await chat(ChatIn(message='laba rugi semua unit dan pusat September 2026', ai_mode='internal'), admin, session)
+    detail = [r for r in reply['rows'] if r['entitas'] not in {'BUMDES Pusat', 'Total gabungan analitis'}]
+    assert len(detail) == 6
+    losing = next(r for r in detail if r['entitas'] == losing_unit.name)
+    assert Decimal(losing['laba_bersih']) == Decimal('-100000')
+    assert 'Beban Operasional Tes' in losing['akun_beban_utama']
+    assert Decimal(next(r for r in detail if r['entitas'] == air.name)['laba_bersih']) > 0
+    assert sum(Decimal(r['porsi_omzet_unit_persen']) for r in detail if r['porsi_omzet_unit_persen'] != 'Tidak berlaku') == Decimal('100')
+    central = next(r for r in reply['rows'] if r['entitas'] == 'BUMDES Pusat')
+    assert central['porsi_omzet_unit_persen'] == 'Tidak berlaku'
+    assert 'bukan pendapatan Pusat' in reply['message']

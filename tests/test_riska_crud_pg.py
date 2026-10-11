@@ -362,7 +362,7 @@ async def test_complete_transaction_instruction_does_not_reask_known_fields(crud
     monkeypatch.setattr(riska_ai, 'ready', lambda provider: True)
     monkeypatch.setattr(riska_ai, 'interpret', AsyncMock(return_value=(riska_ai.Interpretation(action='command', command=command, reply='Baik, saya siapkan drafnya.'), {'model': 'mock-sol'})))
     before = await session.scalar(select(func.count(Transaction.id)))
-    reply = await chat(ChatIn(message='Input transaksi Penjualan hari ini, Penjualan Baru, nominal 50 ribu, debit 1.1.01.15 kredit 4.1.01.15 untuk UU05', ai_mode='sol', unit_usaha_id=toko.id), admin, session)
+    reply = await chat(ChatIn(message='Input transaksi Penjualan hari ini, Penjualan Baru, nominal 50 ribu, debit 1.1.01.15 kredit 4.1.01.15 untuk UU05', ai_mode='auto', unit_usaha_id=toko.id), admin, session)
     assert reply.get('draft_id') and not reply.get('conversation_id'), reply
     assert await session.scalar(select(func.count(Transaction.id))) == before
     await execute(reply['draft_id'], admin, session)
@@ -403,7 +403,7 @@ async def test_casual_field_reply_keeps_already_supplied_partner_name(crud_conte
     mocked = AsyncMock(return_value=(riska_ai.Interpretation(action='command', command='100 ribu', reply='Baik, modalnya saya sesuaikan.'), {'model': 'mock-sol'}))
     monkeypatch.setattr(riska_ai, 'ready', lambda provider: True)
     monkeypatch.setattr(riska_ai, 'interpret', mocked)
-    reply = await chat(ChatIn(message='sebenarnya modalnya seratus ribu', conversation_id=first['conversation_id'], unit_usaha_id=air.id, ai_mode='sol'), admin, session)
+    reply = await chat(ChatIn(message='sebenarnya modalnya seratus ribu', conversation_id=first['conversation_id'], unit_usaha_id=air.id, ai_mode='auto'), admin, session)
     assert reply.get('draft_id') and not reply.get('conversation_id'), reply
     pending = mocked.call_args.args[3]['pengisian']
     assert pending['data']['name'] == 'Bu Ani' and pending['expecting'] == 'capital'

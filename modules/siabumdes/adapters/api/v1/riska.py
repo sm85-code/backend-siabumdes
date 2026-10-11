@@ -172,7 +172,9 @@ async def chat(body: ChatIn, user: User = Depends(READ), session: AsyncSession =
         return await handle_chat(body.model_copy(update={'message': interpretation.command, 'ai_mode': 'internal'}), user, session, request)
 
     # Explicit model mode understands the whole request before internal dispatch.
-    if body.ai_mode in {'sol', 'sonnet'} and (not body.conversation_id or complex_answer) and intent(body.message) != 'cancel' and riska_ai.ready(provider):
+    rich_instruction = not body.conversation_id and len(body.message) > 40 and re.search(r'\b(?:input|tambah|catat|buat|ubah|edit|hapus|masukin|masukkan)\b', body.message, re.I)
+    language_needed = body.ai_mode in {'sol', 'sonnet'} and not body.conversation_id or complex_answer or rich_instruction
+    if body.ai_mode != 'internal' and language_needed and intent(body.message) != 'cancel' and riska_ai.ready(provider):
         interpretation, usage = await ask(context)
         result = await dispatch(interpretation)
     else:

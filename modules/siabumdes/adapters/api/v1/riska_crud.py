@@ -70,6 +70,15 @@ def parse_command(message):
     action = 'create' if verb in {'tambah', 'buat', 'input', 'catat'} else 'update' if verb in {'ubah', 'edit', 'koreksi', 'aktifkan', 'nonaktifkan'} else 'delete' if verb == 'hapus' else 'read'
     tail = text[match.end():].strip(' :"')
     data = {'active': verb == 'aktifkan'} if verb in {'aktifkan', 'nonaktifkan'} and resource == 'unit' else {}
+    if action == 'create' and tail.startswith('{'):
+        try:
+            supplied = json.loads(tail)
+        except ValueError:
+            raise HTTPException(422, 'Rincian yang disiapkan AI belum valid. Tidak ada data yang disimpan.') from None
+        if not isinstance(supplied, dict) or set(supplied) - set(FIELDS[resource]) - {'entitas'} or any(not isinstance(value, (str, int, float, bool)) for value in supplied.values()):
+            raise HTTPException(422, 'Rincian yang disiapkan AI tidak sesuai formulir resmi. Tidak ada data yang disimpan.')
+        data = {'_supplied': supplied}
+        tail = ''
     # Do not infer a financial value from arbitrary digits in a name.
     return resource, action, tail, data
 
@@ -402,11 +411,18 @@ async def handle_crud(session, user, body):
         resource, action, tail, data = command
         authorize(user, resource, action)
         state = {'resource': resource, 'action': action, 'data': data, 'direct_status': 'active' in data}
+        supplied = state['data'].pop('_supplied', None)
+        if supplied is not None:
+            state['supplied'] = supplied
+            entity = state['supplied'].pop('entitas', None)
+            chosen = await unit_for(session, user, entity) if entity else await session.get(UnitUsaha, user.unit_usaha_id if is_pengelola(user) else body.unit_usaha_id) if (user.unit_usaha_id if is_pengelola(user) else body.unit_usaha_id) else None
+            state['unit_id'] = chosen.id if chosen else None
+            state['entity_selected'] = True
         patch = inline_patch(resource, tail, True) if action == 'update' and resource != 'pembayaran' else None
         if patch:
             tail, field, value = patch
             state['inline_patch'] = {'field': field, 'value': value}
-        if resource not in {'unit', 'pengguna'}:
+        if resource not in {'unit', 'pengguna'} and supplied is None:
             try:
                 selected, pusat = await resolve_units(session, body.message, body.unit_usaha_id, user.unit_usaha_id if is_pengelola(user) else None)
             except ValueError as exc:
@@ -461,6 +477,7 @@ async def handle_crud(session, user, body):
             state['repairing'] = expecting == 'repair_field'
         elif expecting:
             data[expecting] = await field_value(session, resource, expecting, body.message, unit)
+            state.get('supplied', {}).pop(expecting, None)
             state['value_supplied'] = True
         if resource not in {'unit', 'pengguna'} and not state.get('entity_selected') and not state.get('unit_id'):
             return await question(session, user, state, 'entity', row)
@@ -469,6 +486,13 @@ async def handle_crud(session, user, body):
             if is_pengelola(user):
                 raise HTTPException(403, 'Modul ini belum tersedia untuk unit Anda. Saya dapat membantu pekerjaan lain sesuai izin unit Anda.')
             return await question(session, user, state, 'entity', row, 'Modul ini memerlukan unit yang sesuai. Silakan pilih dari tombol berikut. ')
+        supplied_fields = state.get('supplied', {})
+        for field in list(supplied_fields):
+            expecting = field
+            data[field] = await field_value(session, resource, field, str(supplied_fields[field]), unit)
+            supplied_fields.pop(field)
+            expecting = None
+        state.pop('supplied', None)
         if resource == 'unit' and action == 'read':
             statement = select(UnitUsaha)
             if is_pengelola(user):

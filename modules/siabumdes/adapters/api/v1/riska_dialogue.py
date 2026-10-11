@@ -49,13 +49,14 @@ async def resolve_units(session, message, selected_id=None, allowed_unit_id=None
         statement = statement.where(UnitUsaha.id == allowed_unit_id)
     units = list((await session.scalars(statement.order_by(UnitUsaha.code))).all())
     lower = clean(message).lower()
+    lower = re.sub(r'\bunit\s+(\d{1,2})\b', lambda match: 'uu' + match.group(1).zfill(2), lower)
     explicit_codes = set(re.findall(r'\buu\d+\b', lower))
     if explicit_codes - {u.code.lower() for u in units}:
         if allowed_unit_id:
             raise HTTPException(403, 'Akses unit lain ditolak')
         raise ValueError('Kode unit tidak aktif/tidak ditemukan. Pilih dari daftar unit aktif.')
     if re.search(r'\b(?:semua|seluruh) unit\b|\bper[_ ]unit\b', lower):
-        return units, False
+        return units, bool(re.search(r'\b(?:pusat|bumdes)\b', lower))
     selected = [u for u in units if re.search(rf'\b{re.escape(u.code.lower())}\b', lower)
                 or u.name.lower() in lower]
     # A short unit name is acceptable only when it uniquely matches live names.
@@ -217,21 +218,36 @@ async def comparative_report(session, units, pusat, start, end, cash=False):
             data = await svc.laba_rugi(start, end, unit_id)
             closed = await session.scalar(select(ClosedPeriod.id).where(ClosedPeriod.period == end.strftime('%Y-%m'),
                                                                         ClosedPeriod.group_code == group))
-            item = {'entitas': label, 'status': 'Tutup Buku' if closed else 'Terbuka'}
+            status = 'Tutup Buku' if closed else 'Terbuka'
+            if (start.year, start.month) != (end.year, end.month):
+                status = 'Bulan akhir: ' + status
+            item = {'entitas': label, 'status': status}
             for key in totals:
                 item[key] = money_str(data[key])
                 totals[key] += Decimal(str(data[key]))
+            revenue = Decimal(str(data['total_pendapatan']))
+            costs = Decimal(str(data['total_hpp'])) + Decimal(str(data['total_beban']))
+            item['margin_laba_persen'] = str((Decimal(str(data['laba_bersih'])) / revenue * 100).quantize(Decimal('0.01'))) if revenue > 0 else 'Tidak dapat dihitung'
+            item['beban_dan_hpp_persen'] = str((costs / revenue * 100).quantize(Decimal('0.01'))) if revenue > 0 else 'Tidak dapat dihitung'
+            item['akun_beban_utama'] = '; '.join(f'{row["name"]}: {money_str(row["amount"])}' for row in sorted(data.get('beban', []), key=lambda row: row['amount'], reverse=True)[:3]) or 'Tidak ada beban tercatat'
+            item['akun_hpp_utama'] = '; '.join(f'{row["name"]}: {money_str(row["amount"])}' for row in sorted(data.get('hpp', []), key=lambda row: row['amount'], reverse=True)[:3]) or 'Tidak ada HPP tercatat'
             rows.append(item)
+    if not cash:
+        unit_rows = rows[int(pusat):]
+        unit_revenue = sum((Decimal(row['total_pendapatan']) for row in unit_rows), Decimal(0))
+        for row in rows:
+            row['porsi_omzet_unit_persen'] = str((Decimal(row['total_pendapatan']) / unit_revenue * 100).quantize(Decimal('0.01'))) if row in unit_rows and unit_revenue > 0 else 'Tidak berlaku'
     multi = len(units) + int(pusat) > 1
     if multi:
         if cash:
             rows.append({'entitas': 'Total gabungan analitis', 'akun': 'Seluruh akun yang ditampilkan',
                          'saldo': money_str(sum((Decimal(row['saldo']) for row in rows), Decimal(0)))})
         else:
-            rows.append({'entitas': 'Total gabungan analitis', 'status': 'Tanpa eliminasi antarentitas',
+            rows.append({**({key: '—' for key in rows[0]} if rows else {}), 'entitas': 'Total gabungan analitis', 'status': 'Tanpa eliminasi antarentitas',
                          **{key: money_str(value) for key, value in totals.items()}})
     return stringify_money_fields({'message': f'Berikut laporan {start.isoformat()} sampai {end.isoformat()}. '
           + ('Gabungan ini adalah ringkasan analitis tanpa eliminasi antarentitas; bukan laporan konsolidasi akuntansi resmi. ' if multi else '')
+          + ('Porsi omzet dihitung terhadap total pendapatan unit yang ditampilkan, bukan pendapatan Pusat. Rincian akun menunjukkan komponen biaya, bukan bukti penyebab operasional. ' if not cash else '')
           + 'Ada hal lain yang bisa Riska bantu? ✨', 'rows': rows,
           'money_columns': ['saldo', *totals]})
 
@@ -240,6 +256,17 @@ async def handle_chat(body, user, session, request=None):
     from modules.siabumdes.adapters.api.scope import is_pengelola
     from modules.siabumdes.adapters.api.v1.riska_execution import operation_unit, prepare, special_table
     message = clean(body.message)
+    if body.conversation_id:
+        pending = await session.scalar(select(RiskaDraft).where(RiskaDraft.id == body.conversation_id, RiskaDraft.user_id == user.id).with_for_update())
+        if pending and pending.payload.get('kind') == 'report_dialogue':
+            if expired(pending):
+                raise HTTPException(409, 'Percakapan laporan kedaluwarsa. Silakan minta laporannya kembali.')
+            await validate_draft_session(session, user, pending)
+            pending.consumed = True
+            if intent(message) == 'cancel':
+                return {'message': 'Baik, permintaan laporan dibatalkan. Ada hal lain yang bisa saya bantu?'}
+            combined = pending.payload['message'] + ' ' + message if intent(message) == 'unknown' else message
+            return await handle_chat(body.model_copy(update={'message': combined, 'conversation_id': None, 'unit_usaha_id': pending.unit_usaha_id}), user, session, request)
     from modules.siabumdes.adapters.api.v1.riska_assignment import assignment_message
     assignment_reply = None if intent(message) == 'cancel' else await assignment_message(session, user, message)
     if assignment_reply is not None:
@@ -319,5 +346,8 @@ async def handle_chat(body, user, session, request=None):
             selected, _ = await resolve_units(session, 'semua unit')
         return await comparative_report(session, selected, pusat or not selected, start, end, action == 'cash')
     except (ValueError, ArithmeticError) as exc:
+        if action in {'cash', 'profit'}:
+            pending = await store(session, user, selected_id, {'kind': 'report_dialogue', 'message': message}, {})
+            return {'conversation_id': pending.id, 'message': f'Baik, saya bantu memeriksa laporan tersebut. {exc} Anda boleh menjawab singkat, misalnya “tahun 2026” atau “September 2026”; saya tetap mengingat laporan yang Anda minta.'}
         return {'message': f'Saya perlu memastikan datanya: {exc}',
                 **({'conversation_id': conversation.id} if conversation else {})}

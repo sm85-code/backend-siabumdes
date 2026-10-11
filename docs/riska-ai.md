@@ -17,3 +17,13 @@ Hak akses/role/sesi penugasan diperiksa lagi setelah respons model. Pengelola te
 Perbaikan CRUD: perintah CRUD baru menggantikan pengisian sebelumnya tanpa menyimpan data; entitas dalam kalimat `tambah mitra ke UU04` dikenali; nama/modal dapat diisi bertahap. Penghapusan yang tidak diizinkan workflow asal menjelaskan alasannya tanpa mengulang pertanyaan. Tidak menghapus jurnal generator langsung.
 
 Verifikasi memakai PostgreSQL lokal terisolasi dan respons provider tiruan. Koneksi API dengan key DigitalOcean serta keberhasilan deployment belum dibuktikan oleh pengujian lokal. Uji produksi dengan pertanyaan/penjelasan dahulu; setiap pencatatan tetap menunggu pemeriksaan draf.
+
+## Konteks percakapan dan laporan tahunan
+
+Mode Sol/Sonnet memahami instruksi lengkap sebelum dispatch ke workflow resmi; hasil pembacaan dikembalikan untuk penjelasan. Mode Internal tetap tanpa model. Rincian transaksi yang sudah diberikan dapat diterjemahkan menjadi field typed dan divalidasi terhadap jenis transaksi/COA terdaftar, tanpa meminta ulang seluruh instruksi. Field yang benar-benar belum tersedia tetap ditanyakan.
+
+Memori kerja memakai record `ai_history` per pengguna dan entitas, terikat role, versi sesi login dan sesi penugasan. Menyimpan paling banyak tiga pertukaran terakhir serta snapshot laporan resmi, berlaku satu jam sejak aktivitas. Snapshot bukan pembacaan live baru; pertanyaan data terbaru harus membaca ulang workflow. Berakhirnya penugasan membatalkan memori beserta draf. Pergantian entitas menghapus konteks widget; percakapan milik pengguna lain ditolak. Konteks model menerima tanggal Jakarta, daftar unit aktif, serta jenis transaksi/COA scoped bila dibutuhkan. Riwayat lama dikurangi jika melewati batas input; angka laporan tetap berasal dari service.
+
+`tahun ini` berarti 1 Januari sampai hari ini; `tahun lalu` adalah tahun kalender sebelumnya; `tahun 2026` memakai tahun tersebut, sampai hari ini bila masih tahun berjalan. Klarifikasi periode memiliki conversation_id sehingga jawaban singkat melanjutkan laporan sebelumnya. `unit 1` dikenali dari kode aktif UU01, tanpa hardcode nama seed.
+
+Perbandingan laba rugi menyertakan margin, rasio HPP+beban, tiga akun HPP/beban terbesar dan porsi omzet terhadap total unit yang ditampilkan. Semua indikator dihitung kode dengan Decimal. Pusat tidak masuk denominator kontribusi omzet unit. Komponen biaya bukan bukti penyebab operasional; analisis tidak boleh mengarang penyebab atau menyebut ringkasan tanpa eliminasi sebagai konsolidasi resmi.

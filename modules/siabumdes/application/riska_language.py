@@ -48,7 +48,7 @@ def intent(message):
                             ('imbal', r'^imbal\s+\w+=|\b(?:input|catat|setoran|bayar|pembayaran|terima)\b.*\bimbal hasil\b')]:
         if re.search(pattern, text):
             return action
-    if re.search(r'\b(laba|rugi|pendapatan|performa|profit|profitabilitas)\b', text):
+    if re.search(r'\b(laba|rugi|pendapatan|omzet|performa|profit|profitabilitas)\b', text):
         return 'profit'
     if re.search(r'\b(saldo|kas|bank)\b', text):
         return 'cash'
@@ -173,6 +173,17 @@ def report_range(message, today):
             raise ValueError('Untuk rentang tanggal, sebutkan tanggal awal dan akhir: dari YYYY-MM-DD sampai YYYY-MM-DD.')
         start, end = map(date.fromisoformat, dates)
     else:
+        years = set(re.findall(r'\b20\d{2}\b', text))
+        named_month = any(re.search(rf'\b{m}\b', text) for m in MONTHS)
+        annual = re.search(r'\btahun\s+(ini|lalu|20\d{2})\b', text) or re.fullmatch(r'\s*(20\d{2})\s*', text)
+        if annual and not named_month and not re.search(r'\b20\d{2}-\d{2}\b', text):
+            if len(years) > 1:
+                raise ValueError('Mohon pilih satu tahun, atau sebutkan rentang tanggal awal dan akhir.')
+            value = annual.group(1)
+            year = today.year if value == 'ini' else today.year - 1 if value == 'lalu' else int(value)
+            if year > today.year:
+                raise ValueError('Tahun tersebut belum berjalan. Mohon pilih tahun berjalan atau tahun sebelumnya.')
+            return date(year, 1, 1), today if year == today.year else date(year, 12, 31)
         periods = re.findall(r'\b(20\d{2})-(0[1-9]|1[0-2])\b', text)
         if len(periods) > 1:
             raise ValueError('Sebutkan satu bulan atau gunakan rentang tanggal lengkap.')

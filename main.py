@@ -26,6 +26,7 @@ from modules.siabumdes.adapters.api.v1.period_close_router import router as peri
 from modules.siabumdes.adapters.api.v1.public_router import router as public_router
 from modules.siabumdes.adapters.api.v1.reports_router import router as reports_router
 from modules.siabumdes.adapters.api.v1.transaction_router import router as transaction_router
+from modules.siabumdes.adapters.api.v1.riska import router as riska_router
 from shared.config import APP_TITLE, CORS_ORIGIN_REGEX, CORS_ORIGINS, origin_allowed
 from shared.database import engine
 from modules.siabumdes.schema import ensure_schema
@@ -73,6 +74,7 @@ app.add_middleware(
     expose_headers=["Content-Disposition"],
 )
 
+app.include_router(riska_router)
 app.include_router(public_router)
 app.include_router(auth_router)
 app.include_router(period_close_router)

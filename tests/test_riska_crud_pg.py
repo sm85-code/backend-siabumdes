@@ -49,6 +49,31 @@ async def test_task_memory_revises_only_capital_and_invalidates_old_draft(crud_c
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('replacement', [
+    {'action': 'command', 'command': 'hapus mitra', 'reply': 'Hapus.'},
+    {'action': 'command', 'command': 'tambah mitra', 'reply': 'Pindah.',
+     'task': {'resource': 'mitra', 'fields': [{'name': 'entitas', 'value': 'BUMDES'}]}},
+])
+async def test_revision_rejects_unrelated_command_or_entity_without_consuming_draft(crud_context, monkeypatch, replacement):
+    from unittest.mock import AsyncMock
+    from modules.siabumdes.application import riska_ai
+    session, admin, _, _, _, unit, *_ = crud_context
+    monkeypatch.setattr(riska_ai, 'ready', lambda provider: True)
+    monkeypatch.setattr(riska_ai, 'interpret', AsyncMock(side_effect=[
+        (riska_ai.Interpretation(action='command', command='tambah mitra', reply='Draf siap.',
+         task=riska_ai.TaskUpdate(resource='mitra', fields=[riska_ai.TaskField(name='name', value='Suryaman'), riska_ai.TaskField(name='capital', value='5 juta')])), {'model': 'mock-sol'}),
+        (riska_ai.Interpretation(**replacement), {'model': 'mock-sol'}),
+    ]))
+    first = await chat(ChatIn(message='Tambah mitra Suryaman modal 5 juta', unit_usaha_id=unit.id, ai_mode='auto'), admin, session)
+    with pytest.raises(HTTPException) as error:
+        await chat(ChatIn(message='modalnya jadi 6 juta', unit_usaha_id=unit.id, ai_mode='auto',
+                          revision_draft_id=first['draft_id']), admin, session)
+    assert error.value.status_code == 422
+    assert not (await session.get(RiskaDraft, first['draft_id'])).consumed
+    assert not await session.scalar(select(YieldPartner).where(YieldPartner.name == 'Suryaman'))
+
+
+@pytest.mark.asyncio
 async def test_profit_transaction_details_reconcile_and_exclude_other_entities_and_closing(crud_context):
     from datetime import date
     from modules.siabumdes.application.reporting import ReportingService

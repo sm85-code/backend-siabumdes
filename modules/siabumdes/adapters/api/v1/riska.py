@@ -179,8 +179,10 @@ async def chat(body: ChatIn, user: User = Depends(READ), session: AsyncSession =
 
     async def dispatch(interpretation):
         nonlocal task
-        if revision and interpretation.task and interpretation.task.resource != revision.payload['resource']:
+        if revision and (not interpretation.task or interpretation.task.resource != revision.payload['resource']):
             raise HTTPException(422, 'Revisi harus tetap untuk data yang sama. Batalkan draf untuk memulai tugas lain.')
+        if revision and any(field.name == 'entitas' and field.value != context['memori_tugas']['fields']['entitas'] for field in interpretation.task.fields):
+            raise HTTPException(422, 'Entitas revisi harus tetap sama dengan draf awal.')
         if revision:
             revision.consumed = True
         if interpretation.task:

@@ -44,7 +44,7 @@ body {
 table.report { width: 100%%; border-collapse: collapse; margin-top: 6px; table-layout: fixed; }
 table.report thead { display: table-header-group; }
 table.report tr { break-inside: avoid; }
-table.report .prose { white-space: normal; line-height: 1.55; text-align: left; }
+table.report .prose { white-space: normal; line-height: 1.55; text-align: justify; text-align-last: left; }
 table.report tbody tr:nth-child(even) { background: #f7f9fc; }
 .signatures { break-inside: avoid; }
 table.report th {

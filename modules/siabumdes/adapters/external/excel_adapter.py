@@ -181,6 +181,9 @@ def generate_excel_report(
         line_count = max((sum(max(1, (len(line) + max(8, int(ws.column_dimensions[get_column_letter(c.column)].width) - 4) - 1) // max(8, int(ws.column_dimensions[get_column_letter(c.column)].width) - 4)) for line in str(c.value or '').split('\n')) for c in ws[row_index]), default=1)
         ws.row_dimensions[row_index].height = min(400, max(24, line_count * 14 + 8))
     ws.freeze_panes = f"A{header_row + 1}"
+    for row_index, values in enumerate(rows, start=header_row + 1):
+        if len(headers) == 2 and len(values) == 2 and not values[1] and len(str(values[0])) > 60:
+            ws.cell(row_index, 1).alignment = Alignment(horizontal='justify', vertical='top', wrap_text=True, indent=1)
     ws.print_title_rows = f"{header_row}:{header_row}"
     ws.page_setup.orientation = "landscape" if landscape else "portrait"
     ws.sheet_properties.pageSetUpPr.fitToPage = True

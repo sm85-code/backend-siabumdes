@@ -156,6 +156,10 @@ def generate_word_report(
             cells = table.add_row().cells
             for cell, weight in zip(cells, column_weights(headers)):
                 cell.width = int(available_width * weight)
+            if len(headers) == 2 and len(row) == 2 and not row[1] and len(str(row[0])) > 60:
+                merged = cells[0].merge(cells[1])
+                _set_cell_text(merged, str(row[0]), size=9, align=WD_ALIGN_PARAGRAPH.LEFT)
+                continue
             for i, value in enumerate(row):
                 is_num = i in money_cols and looks_numeric(value)
                 if is_num:

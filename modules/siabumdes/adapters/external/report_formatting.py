@@ -22,7 +22,7 @@ def is_money_header(h: str) -> bool:
 
 
 def column_weights(headers: list[str]) -> list[float]:
-    weights = [40 if any(word in h.lower() for word in ('nama', 'uraian', 'keterangan')) else 24 if is_money_header(h) else 16 for h in headers]
+    weights = [5 if h.lower().strip() in {'no', 'no.', 'nomor'} else 40 if any(word in h.lower() for word in ('nama', 'uraian', 'keterangan')) else 24 if is_money_header(h) else 16 for h in headers]
     total = sum(weights) or 1
     return [weight / total for weight in weights]
 

@@ -31,7 +31,10 @@ body {
 .letterhead { text-align: left; border-bottom: 2.5px solid #%(primary)s; padding-bottom: 8px; margin-bottom: 14px; text-align: left; }
 .letterhead .identity { display: table-cell; width: 58%%; padding-right: 14px; vertical-align: top; }
 .letterhead .document { display: table-cell; width: 42%%; border: 1px solid #%(primary)s; padding: 8px; vertical-align: top; }
-.letterhead .logo { float: left; margin-right: 12px; max-height: 52px; max-width: 160px; margin-bottom: 4px; }
+.letterhead .brand-block { width: 100%%; border-collapse: collapse; }
+.letterhead .brand-block td { vertical-align: top; }
+.letterhead .logo-cell { width: 18mm; padding-right: 8px; }
+.letterhead .logo { max-height: 52px; max-width: 54px; margin-bottom: 4px; }
 .letterhead .org { font-size: 14pt; font-weight: 700; color: #%(primary)s; letter-spacing: 0.2px; }
 .letterhead .legal { font-size: 8.5pt; color: #444; }
 .letterhead .addr { font-size: 8pt; color: #555; white-space: pre-line; margin-top: 2px; }
@@ -41,6 +44,7 @@ body {
 table.report { width: 100%%; border-collapse: collapse; margin-top: 6px; table-layout: fixed; }
 table.report thead { display: table-header-group; }
 table.report tr { break-inside: avoid; }
+table.report .prose { white-space: normal; line-height: 1.55; text-align: left; }
 table.report tbody tr:nth-child(even) { background: #f7f9fc; }
 .signatures { break-inside: avoid; }
 table.report th {
@@ -49,7 +53,7 @@ table.report th {
   overflow-wrap: break-word;
 }
 table.report td {
-  padding: 8px 8px; border-bottom: 0.35pt solid #c8c8c8; vertical-align: top; font-size: 8.5pt;
+  padding: 6px 8px; border-bottom: 0.35pt solid #c8c8c8; vertical-align: top; font-size: 8.5pt;
   overflow-wrap: break-word; word-break: break-word;
 }
 table.report tr.section td { background: #%(pale)s; font-weight: 700; }
@@ -63,9 +67,9 @@ table.report td.num, table.report th.num {
 }
 .callout .lbl { font-size: 7.5pt; color: #666; text-transform: uppercase; }
 .callout .val { font-size: 10pt; font-weight: 700; color: #%(primary)s; }
-.signatures { margin-top: 28px; width: 100%%; border-collapse: collapse; }
+.signatures { margin-top: 20px; width: 100%%; border-collapse: collapse; }
 .signatures td { width: 33%%; text-align: center; vertical-align: top; padding: 0 8px; font-size: 8.5pt; }
-.signatures .role { font-weight: 600; margin-bottom: 36px; }
+.signatures .role { font-weight: 600; margin-bottom: 28px; }
 .signatures .line { border-top: 0.6pt solid #333; margin: 0 12px; padding-top: 4px; min-height: 18px; }
 .footer-note { margin-top: 14px; font-size: 7.5pt; color: #777; text-align: center; }
 """
@@ -132,7 +136,8 @@ def build_report_html(
     body_rows = []
     for row in rows:
         cls = _row_class(row)
-        tds = "".join(
+        prose = len(headers) == 2 and len(row) == 2 and not row[1] and len(str(row[0])) > 60
+        tds = f'<td colspan="2" class="prose">{_esc(row[0])}</td>' if prose else "".join(
             f'<td class="{"num" if i in money_cols and looks_numeric(cell) else ""}">'
             f'{_esc(format_money(cell) if i in money_cols and looks_numeric(cell) else cell)}</td>'
             for i, cell in enumerate(row)
@@ -167,11 +172,12 @@ def build_report_html(
 <body>
   <div class="letterhead">
     <div class="identity">
-    {f'<img class="logo" src="{_esc(b.logo_url)}"/>' if b.logo_url else ""}
+    <table class="brand-block"><tr>
+    {f'<td class="logo-cell"><img class="logo" src="{_esc(b.logo_url)}"/></td>' if b.logo_url else ""}<td>
     <div class="org">{_esc(b.org_name)}</div>
     <div class="legal">{_esc(b.org_legal_name)}</div>
     <div class="addr">{_esc(b.address_block)}</div>
-    </div><div class="document"><div class="doc-title">{_esc(title)}</div>{sub_html}</div>
+    </td></tr></table></div><div class="document"><div class="doc-title">{_esc(title)}</div>{sub_html}</div>
   </div>
   <div class="meta">{gen}</div>
   {callout_html}

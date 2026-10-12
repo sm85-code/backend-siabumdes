@@ -365,15 +365,15 @@ async def _materialize(
         start, end = _need_dates(start_date, end_date)
         data = await svc.laba_rugi(start, end, unit_id)
         rows = [["Pendapatan", "", data["total_pendapatan"]]]
-        rows += [[r["code"], r["name"], r["amount"]] for r in data["pendapatan"]]
+        rows += [[r['code'], r['description'], r['amount']] for r in data['rincian_transaksi']['pendapatan']]
         if data["has_hpp"]:
             rows += [["Harga Pokok Penjualan", "", data["total_hpp"]]]
-            rows += [[r["code"], r["name"], r["amount"]] for r in data["hpp"]]
+            rows += [[r['code'], r['description'], r['amount']] for r in data['rincian_transaksi']['hpp']]
             rows.append(["Laba kotor", "", data["laba_kotor"]])
         rows += [["Beban", "", data["total_beban"]]]
-        rows += [[r["code"], r["name"], r["amount"]] for r in data["beban"]]
+        rows += [[r['code'], r['description'], r['amount']] for r in data['rincian_transaksi']['beban']]
         rows.append(["Laba bersih", "", data["laba_bersih"]])
-        return data, "Laba Rugi", ["Kode", "Nama", "Nominal"], rows
+        return data, "Laba Rugi", ["Kode Akun", "Uraian", "Jumlah (Rp)"], rows
     if report_key == "neraca":
         as_of = parse_date(as_of_date or end_date)
         if not as_of:
@@ -418,7 +418,7 @@ async def _materialize(
         # section heading above -- putting them in "Nilai" instead visually
         # indents every note under a heading that isn't actually a label.
         rows += [[note, ""] for note in data["kebijakan_akuntansi"]]
-        return data, "CaLK", ["Uraian", "Nilai"], rows
+        return data, "Catatan atas Laporan Keuangan", ["Uraian", "Nilai"], rows
     if report_key in {"ledger", "buku-besar"}:
         if not account_code:
             raise HTTPException(status_code=400, detail="account_code wajib")

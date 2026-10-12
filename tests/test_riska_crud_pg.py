@@ -21,6 +21,25 @@ crud_context = fixture_source.context
 
 
 @pytest.mark.asyncio
+async def test_profit_transaction_details_reconcile_and_exclude_other_entities_and_closing(crud_context):
+    from datetime import date
+    from modules.siabumdes.application.reporting import ReportingService
+    session, admin, _, _, unit, air, *_ = crud_context
+    session.add_all([
+        Transaction(created_by=admin.id, transaction_type='income', date=date(2026, 9, 2), description='Penjualan kedua', amount=Decimal('10000'), debit_account_code='1.1.01.15', credit_account_code='4.1.01.15', unit_usaha_id=unit.id),
+        Transaction(created_by=admin.id, transaction_type='income', date=date(2026, 9, 3), description='Koreksi penjualan', amount=Decimal('2000'), debit_account_code='4.1.01.15', credit_account_code='1.1.01.15', unit_usaha_id=unit.id),
+        Transaction(created_by=admin.id, transaction_type='income', date=date(2026, 9, 4), description='Penutupan', amount=Decimal('30000'), debit_account_code='4.1.01.15', credit_account_code='1.1.01.15', unit_usaha_id=unit.id, is_closing=True),
+        Transaction(created_by=admin.id, transaction_type='income', date=date(2026, 9, 5), description='Entitas lain', amount=Decimal('90000'), debit_account_code='1.1.01.15', credit_account_code='4.1.01.15', unit_usaha_id=air.id),
+    ])
+    await session.flush()
+    data = await ReportingService(session).laba_rugi(date(2026, 9, 1), date(2026, 9, 30), unit.id)
+    rows = data['rincian_transaksi']['pendapatan']
+    assert sum(Decimal(str(row['amount'])) for row in rows) == Decimal(str(data['total_pendapatan']))
+    assert any(row['description'] == 'Koreksi penjualan' and row['amount'] == -2000 for row in rows)
+    assert not any(row['description'] in {'Penutupan', 'Entitas lain'} for row in rows)
+
+
+@pytest.mark.asyncio
 async def test_auto_ai_clarifies_before_internal_and_remembers_short_answers(crud_context, monkeypatch):
     from unittest.mock import AsyncMock
     from modules.siabumdes.application import riska_ai

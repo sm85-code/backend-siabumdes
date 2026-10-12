@@ -1,9 +1,24 @@
 """Financial parser regressions: colloquial amounts, incomplete data and ambiguous writes."""
 from datetime import date
 import pytest
-from modules.siabumdes.application.riska_language import amount, extract_operation, intent, report_range
+from modules.siabumdes.application.riska_language import amount, extract_operation, intent, partial_transaction_date, report_range, transaction_date
 
 TODAY = date(2026, 10, 11)
+
+
+@pytest.mark.parametrize('text', ['1 okt', '1okt', '1 oktober', '1oktober', 'tanggal 1 OKT'])
+def test_short_dates_keep_day_month_without_guessing_year(text):
+    assert partial_transaction_date(text) == {'day': 1, 'month': 10}
+    assert transaction_date(text, TODAY) is None
+    assert transaction_date(text + ' 2026', TODAY) == '2026-10-01'
+
+
+def test_partial_dates_validate_calendar_and_do_not_guess_month():
+    assert partial_transaction_date('1') is None
+    assert partial_transaction_date('1 okt dan 2 nov') is None
+    assert partial_transaction_date('29 feb') == {'day': 29, 'month': 2}
+    with pytest.raises(ValueError):
+        partial_transaction_date('31 feb')
 
 
 def test_natural_purchase_and_multiword_names():

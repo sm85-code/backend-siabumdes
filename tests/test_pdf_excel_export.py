@@ -27,6 +27,16 @@ SAMPLE_ROWS = [
 ]
 
 
+def test_number_column_and_full_width_policy_paragraph():
+    from modules.siabumdes.adapters.external.report_formatting import column_weights
+    weights = column_weights(['No.', 'Uraian', 'Jumlah (Rp)'])
+    assert weights[0] < .1 and weights[1] > .5
+    note = 'Kebijakan akuntansi yang panjang harus dibaca sebagai paragraf pada seluruh lebar tabel. ' * 3
+    html = build_report_html(title='Catatan atas Laporan Keuangan', table_headers=['Uraian', 'Nilai'], table_rows=[[note, '']])
+    assert '<td colspan="2" class="prose">' in html
+    assert 'float: left' not in html
+
+
 def test_weasyprint_pdf_path_does_not_silently_fall_back():
     """Guards against the pydyf-version regression: render_pdf_from_html
     must return real bytes, not None (which would mean it swallowed an

@@ -114,12 +114,23 @@ class ReportingService:
         )
         debit: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
         credit: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
+        details = {'pendapatan': [], 'hpp': [], 'beban': []}
         for tx in txs:
             d_code, c_code = tx.debit_account_code, tx.credit_account_code
             if d_code in accounts:
                 debit[d_code] += tx.amount
             if c_code in accounts:
                 credit[c_code] += tx.amount
+            # Signed transaction contributions use exactly the same account scope/formula.
+            for code in dict.fromkeys((d_code, c_code)):
+                account = accounts.get(code)
+                if not account or account.category not in details or account.category == 'hpp' and not has_hpp:
+                    continue
+                value = (tx.amount if code == d_code else Decimal('0')) - (tx.amount if code == c_code else Decimal('0'))
+                if account.category == 'pendapatan':
+                    value = -value
+                if value:
+                    details[account.category].append({'code': code, 'description': tx.description, 'date': tx.date.isoformat(), 'reference': tx.reference, 'amount': _f(value)})
 
         def _net_rows(category: str, formula: str) -> list[dict[str, Any]]:
             rows = []
@@ -152,6 +163,7 @@ class ReportingService:
             "total_beban": total_b,
             "laba_bersih": laba_bersih,
             "has_hpp": has_hpp,
+            "rincian_transaksi": details,
             "format": "laba-kotor" if has_hpp else "ringkas",
             "start_date": start.isoformat(),
             "end_date": end.isoformat(),

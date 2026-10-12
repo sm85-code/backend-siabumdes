@@ -162,20 +162,23 @@ def generate_excel_report(
             elif c_idx in money_cols:
                 cell.alignment = Alignment(horizontal="right")
 
+    for row_index, values in enumerate(rows, start=header_row + 1):
+        if len(headers) == 2 and len(values) == 2 and not values[1] and len(str(values[0])) > 60:
+            ws.merge_cells(start_row=row_index, start_column=1, end_row=row_index, end_column=2)
     for col in range(1, len(headers) + 1):
         letter = get_column_letter(col)
         max_len = len(str(headers[col - 1])) if headers else 10
         for row in rows:
             if col - 1 < len(row) and row[col - 1] is not None:
                 max_len = max(max_len, min(len(str(row[col - 1])), 40))
-        ws.column_dimensions[letter].width = max(max_len + 4, 12)
+        ws.column_dimensions[letter].width = 6 if headers[col - 1].lower().strip() in {'no', 'no.', 'nomor'} else max(max_len + 4, 12)
 
     for row in ws.iter_rows(min_row=header_row, max_row=header_row + len(rows)):
         for cell in row:
             cell.alignment = Alignment(horizontal=cell.alignment.horizontal or 'left', vertical='center', wrap_text=True, indent=1)
     ws.row_dimensions[header_row].height = 30
     for row_index in range(header_row + 1, header_row + len(rows) + 1):
-        line_count = max((sum(max(1, (len(line) + max(8, int(ws.column_dimensions[c.column_letter].width) - 4) - 1) // max(8, int(ws.column_dimensions[c.column_letter].width) - 4)) for line in str(c.value or '').split('\n')) for c in ws[row_index]), default=1)
+        line_count = max((sum(max(1, (len(line) + max(8, int(ws.column_dimensions[get_column_letter(c.column)].width) - 4) - 1) // max(8, int(ws.column_dimensions[get_column_letter(c.column)].width) - 4)) for line in str(c.value or '').split('\n')) for c in ws[row_index]), default=1)
         ws.row_dimensions[row_index].height = min(400, max(24, line_count * 14 + 8))
     ws.freeze_panes = f"A{header_row + 1}"
     ws.print_title_rows = f"{header_row}:{header_row}"

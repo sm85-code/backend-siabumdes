@@ -7,6 +7,10 @@ from decimal import Decimal
 
 MONTHS = ['januari', 'februari', 'maret', 'april', 'mei', 'juni', 'juli', 'agustus',
           'september', 'oktober', 'november', 'desember']
+MONTH_ALIASES = {name: index + 1 for index, name in enumerate(MONTHS)}
+MONTH_ALIASES.update(dict(zip(['jan', 'feb', 'mar', 'apr', 'jun', 'jul', 'agu', 'ags', 'sep', 'sept', 'okt', 'nov', 'des'],
+                              [1, 2, 3, 4, 6, 7, 8, 8, 9, 9, 10, 11, 12])))
+NAMED_DATE = r'\b(\d{1,2})\s*(' + '|'.join(sorted(MONTH_ALIASES, key=len, reverse=True)) + r')\b'
 FIELDS = {
     'imbal': ['mitra', 'tanggal', 'bulan', 'tahun', 'nominal'],
     'masuk': ['produk', 'qty', 'harga', 'pemasok', 'tanggal'],
@@ -77,6 +81,17 @@ def amount(value):
     return format(result, 'f')
 
 
+def partial_transaction_date(message):
+    """Keep an explicit day/month while asking only for its missing year."""
+    text = clean(message).lower()
+    match = re.fullmatch(r'(?:tanggal\s+)?' + NAMED_DATE + r'[.!?]?', text)
+    if not match:
+        return None
+    day, month = int(match[1]), MONTH_ALIASES[match[2]]
+    date(2000, month, day)  # Leap year permits 29 February; chosen year is validated later.
+    return {'day': day, 'month': month}
+
+
 def transaction_date(message, today):
     """Resolve explicit Indonesian dates without inventing a missing month/year."""
     text = message.lower()
@@ -85,9 +100,9 @@ def transaction_date(message, today):
         candidates.append(date.fromisoformat(value))
     for day, month, year in re.findall(r"\b(\d{1,2})[-/](\d{1,2})[-/](\d{4})\b", text):
         candidates.append(date(int(year), int(month), int(day)))
-    pattern = r"\b(\d{1,2})\s+(" + '|'.join(MONTHS) + r")\s+(\d{4})\b"
+    pattern = NAMED_DATE + r'\s+(\d{4})\b'
     for day, month, year in re.findall(pattern, text):
-        candidates.append(date(int(year), MONTHS.index(month) + 1, int(day)))
+        candidates.append(date(int(year), MONTH_ALIASES[month], int(day)))
     if re.search(r"\bhari ini\b", text):
         candidates.append(today)
     if re.search(r"\bkemarin\b", text):

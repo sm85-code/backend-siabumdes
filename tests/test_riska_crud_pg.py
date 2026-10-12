@@ -20,6 +20,24 @@ from modules.siabumdes.inventory.infrastructure.models import Product  # noqa: E
 crud_context = fixture_source.context
 
 
+@pytest.mark.asyncio
+async def test_short_date_followup_remembers_day_month_and_entity(crud_context):
+    session, admin, *_ = crud_context
+    reply = await talk(session, admin, 'tambah transaksi', ['pusat', '1okt'])
+    assert 'Tanggal 1 Oktober sudah saya pahami' in reply['message']
+    assert reply['choices'] and all(len(choice['message']) == 4 for choice in reply['choices'])
+    conversation = reply['conversation_id']
+    repeated = await chat(ChatIn(message='1oktober', conversation_id=conversation), admin, session)
+    assert repeated['conversation_id'] == conversation
+    assert 'Untuk tahun berapa' in repeated['message']
+    reply = await chat(ChatIn(message='2026', conversation_id=conversation), admin, session)
+    row = await session.get(RiskaDraft, conversation)
+    assert row.payload['data']['date'] == '2026-10-01'
+    assert row.payload['entity_selected'] and row.payload['unit_id'] is None
+    assert row.payload['expecting'] == 'transaction_type'
+    assert not reply.get('draft_id')
+
+
 async def talk(session, actor, command, answers=(), unit=None):
     kw = {'unit_usaha_id': unit.id if unit else None, 'session_id': 'manager-session' if actor.role == 'pengelola' else None}
     reply = await chat(ChatIn(message=command, **kw), actor, session)

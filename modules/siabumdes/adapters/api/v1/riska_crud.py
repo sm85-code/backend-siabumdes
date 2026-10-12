@@ -19,7 +19,7 @@ from sqlalchemy.exc import IntegrityError
 
 from shared.config import PUBLIC_ROLES, WRITE_LEVEL, public_role
 from modules.siabumdes.adapters.api.scope import assert_can_mutate_period, assert_unit_active, is_pengelola
-from modules.siabumdes.application.riska_language import MONTHS, amount, clean, transaction_date
+from modules.siabumdes.application.riska_language import MONTHS, amount, clean, partial_transaction_date, transaction_date
 from modules.siabumdes.application.riska_sessions import bind_payload, validate_draft_session, offer_more
 from modules.siabumdes.identity.infrastructure.models import RiskaDraft, User
 from modules.siabumdes.infrastructure.models import Account, JournalItem, Transaction, TransactionType, UnitUsaha, YieldPartner, YieldPayment
@@ -224,6 +224,9 @@ async def question(session, user, state, field, row=None, extra=''):
     subject = resource + (' “' + str(state.get('data', {}).get('name')) + '”' if state.get('data', {}).get('name') else '')
     if field == 'entity':
         prompt = 'Boleh tahu data ini untuk BUMDES Pusat atau unit usaha mana? Pilih dari tombol di bawah, ya.'
+    elif field == 'date_year':
+        partial = state['partial_date']
+        prompt = f"Tanggal {partial['day']} {MONTHS[partial['month'] - 1].capitalize()} sudah saya pahami. Untuk tahun berapa? Pilih tombol atau ketik tahunnya saja."
     elif field == 'target':
         prompt = f'Boleh sebutkan {resource} yang ingin Anda pilih, memakai nama atau referensinya? Jika belum ingat, ketik “lihat {resource}” agar saya tampilkan daftarnya.'
     elif field in {'field', 'repair_field'}:
@@ -231,6 +234,9 @@ async def question(session, user, state, field, row=None, extra=''):
     else:
         prompt = 'Boleh saya tahu ' + NAMES.get(field, field) + '?'
     choices = [{'label': NAMES.get(key, key), 'message': key} for key in (FIELDS[resource] if field == 'repair_field' else UPDATES[resource])] if field in {'field', 'repair_field'} else []
+    if field == 'date_year':
+        year = datetime.now(ZoneInfo('Asia/Jakarta')).year
+        choices = [{'label': str(value), 'message': str(value)} for value in [year, year - 1]]
     if field == 'entity':
         units = list((await session.scalars(select(UnitUsaha).where(UnitUsaha.active.is_(True)).order_by(UnitUsaha.code))).all())
         if resource in {'mitra', 'pembayaran'}:
@@ -475,7 +481,29 @@ async def handle_crud(session, user, body):
             state['update_field'] = value if expecting == 'repair_field' and value in FIELDS[resource] else choose_field(resource, value)
             state['value_supplied'] = False
             state['repairing'] = expecting == 'repair_field'
+        elif expecting == 'date_year':
+            partial = state['partial_date']
+            answer = clean(body.message).strip()
+            if re.fullmatch(r'(?:tahun\s+)?\d{4}', answer, re.I):
+                year = int(answer.split()[-1])
+                value = date(year, partial['month'], partial['day']).isoformat()
+            else:
+                value = transaction_date(answer, datetime.now(ZoneInfo('Asia/Jakarta')).date())
+                replacement = partial_transaction_date(answer) if not value else None
+                if replacement:
+                    state['partial_date'] = {**replacement, 'field': partial['field']}
+                if not value:
+                    return await question(session, user, state, 'date_year', row)
+            data[partial['field']] = value
+            state.get('supplied', {}).pop(partial['field'], None)
+            state.pop('partial_date', None)
+            state['value_supplied'] = True
         elif expecting:
+            if expecting in {'date', 'transaction_date'}:
+                partial = partial_transaction_date(body.message)
+                if partial:
+                    state['partial_date'] = {**partial, 'field': expecting}
+                    return await question(session, user, state, 'date_year', row)
             data[expecting] = await field_value(session, resource, expecting, body.message, unit)
             state.get('supplied', {}).pop(expecting, None)
             state['value_supplied'] = True
@@ -489,6 +517,11 @@ async def handle_crud(session, user, body):
         supplied_fields = state.get('supplied', {})
         for field in list(supplied_fields):
             expecting = field
+            if field in {'date', 'transaction_date'}:
+                partial = partial_transaction_date(str(supplied_fields[field]))
+                if partial:
+                    state['partial_date'] = {**partial, 'field': field}
+                    return await question(session, user, state, 'date_year', row)
             data[field] = await field_value(session, resource, field, str(supplied_fields[field]), unit)
             supplied_fields.pop(field)
             expecting = None

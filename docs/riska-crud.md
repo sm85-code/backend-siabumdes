@@ -14,7 +14,7 @@ Admin dapat menggunakan `lihat`, `tambah`/`buat`/`input`, `ubah`/`edit`/`koreksi
 | Mitra imbal hasil | `tambah mitra`, `ubah mitra Bu Hajah Ani` | Nama, modal; register UU04 |
 | Pembayaran imbal hasil | `ubah pembayaran`, `hapus pembayaran` | Nama mitra, tahun, bulan; bagian dan nilai yang diubah |
 
-Contoh percakapan: `ubah produk Daster Arab Jumbo` → pilih **harga jual** → `30 ribu` → periksa draf → **Ya, Eksekusi**. Bisa juga langsung `ubah produk Daster Arab Jumbo harga jual jadi 30 ribu`. Tanggal dapat dijawab `hari ini`, `kemarin`, atau `10 Oktober 2026`. Data kurang selalu ditanyakan; nominal/tanggal tidak ditebak. Ketik `batal` untuk membatalkan pengisian.
+Contoh percakapan: `ubah produk Daster Arab Jumbo` → pilih **harga jual** → `30 ribu` → periksa draf → **Ya, Eksekusi**. Bisa juga langsung `ubah produk Daster Arab Jumbo harga jual jadi 30 ribu`. Tanggal dapat dijawab `hari ini`, `kemarin`, `10 Oktober 2026`, atau `10 okt 2026`. Untuk transaksi umum dan pembayaran mitra, jawaban pendek seperti `1 okt`, `1okt`, atau `1oktober` akan disimpan sebagai tanggal dan bulan; Riska kemudian hanya menanyakan tahun dengan tombol pilihan. Jawab `2026` untuk melengkapi tanggal tersebut tanpa mengulang tanggal atau entitas. Data kurang selalu ditanyakan; nominal/tanggal tidak ditebak. Ketik `batal` untuk membatalkan pengisian.
 
 Batas yang mengikuti sistem:
 

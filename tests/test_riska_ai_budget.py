@@ -1,6 +1,9 @@
+import os
 from datetime import datetime
 from decimal import Decimal
 from zoneinfo import ZoneInfo
+
+os.environ.setdefault("DATABASE_URL", "postgresql://user:pass@localhost/test")
 
 from modules.siabumdes.application.riska_ai import budget_summary
 

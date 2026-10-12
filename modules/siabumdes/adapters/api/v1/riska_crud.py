@@ -19,7 +19,7 @@ from sqlalchemy.exc import IntegrityError
 
 from shared.config import PUBLIC_ROLES, WRITE_LEVEL, public_role
 from modules.siabumdes.adapters.api.scope import assert_can_mutate_period, assert_unit_active, is_pengelola
-from modules.siabumdes.application.riska_language import MONTHS, amount, clean, partial_transaction_date, transaction_date
+from modules.siabumdes.application.riska_language import AMOUNT, MONTHS, amount, clean, partial_transaction_date, transaction_date
 from modules.siabumdes.application.riska_sessions import bind_payload, validate_draft_session, offer_more
 from modules.siabumdes.identity.infrastructure.models import RiskaDraft, User
 from modules.siabumdes.infrastructure.models import Account, JournalItem, Transaction, TransactionType, UnitUsaha, YieldPartner, YieldPayment
@@ -156,6 +156,22 @@ async def target(session, resource, data, unit, lock=False):
     elif resource in {'transaksi', 'produk', 'mitra'}:
         conditions.append(model.unit_usaha_id == (unit.id if unit else None))
     return await lookup(session, model, data['target'], conditions, lock)
+
+
+def partner_details(message):
+    """Separate an explicitly stated capital from a partner name, including corrections."""
+    text = clean(message).strip()
+    text = re.sub(r'^(?:itu|nama\s+mitra|mitra|namanya)\s*[,=:]?\s*', '', text, flags=re.I)
+    match = re.fullmatch(r'(.+?)\s*[,;]?\s+modal\s*(?:=|sebesar|senilai)?\s*(' + AMOUNT + r')', text, re.I)
+    if not match:
+        # A unit suffix distinguishes capital from digits that belong to a name.
+        match = re.fullmatch(r'(.+?)\s*[,;]?\s+(\d[\d.,]*\s*(?:ribu|juta|rb|jt|k))', text, re.I)
+    if not match:
+        return None
+    name = match[1].strip().strip(',;').strip().strip('"')
+    if not name:
+        return None
+    return {'name': name, 'capital': amount(match[2])}
 
 
 async def field_value(session, resource, field, message, unit):
@@ -441,6 +457,10 @@ async def handle_crud(session, user, body):
             elif pusat:
                 state['entity_selected'] = True
         if action == 'create' and resource == 'mitra' and tail:
+            details = partner_details(tail)
+            if details:
+                state['data'].update(details)
+                tail = ''
             capital = re.search(r'\bmodal\s*(?:=|sebesar|senilai)?\s*(.+)$', tail, re.I)
             if capital:
                 try:
@@ -498,6 +518,17 @@ async def handle_crud(session, user, body):
             state.get('supplied', {}).pop(partial['field'], None)
             state.pop('partial_date', None)
             state['value_supplied'] = True
+        elif expecting and resource == 'mitra' and action == 'create' and expecting in {'name', 'capital'} and partner_details(body.message):
+            data.update(partner_details(body.message))
+            state.get('supplied', {}).pop('name', None)
+            state.get('supplied', {}).pop('capital', None)
+            state['value_supplied'] = True
+        elif expecting == 'capital' and resource == 'mitra' and action == 'create' and (
+            re.match(r'^nama\s+mitra\b', clean(body.message), re.I)
+            or (partner_details(str(data.get('name', ''))) or {}).get('name', '').casefold() == clean(body.message).casefold()
+        ):
+            data['name'] = re.sub(r'^nama\s+mitra\s*[,=:]?\s*', '', clean(body.message), flags=re.I).strip()
+            return await question(session, user, state, 'capital', row, 'Nama mitra sudah saya perbaiki. ')
         elif expecting:
             if expecting in {'date', 'transaction_date'}:
                 partial = partial_transaction_date(body.message)

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import Any, Optional
 
 from reportlab.lib import colors
@@ -12,8 +13,8 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm, mm
 from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-from modules.siabumdes.adapters.external.report_formatting import format_money, is_money_header, row_is_total
-from modules.siabumdes.report_branding import ReportBranding, fetch_logo_bytes, get_report_branding
+from modules.siabumdes.adapters.external.report_formatting import column_weights, format_money, is_money_header, row_is_total
+from modules.siabumdes.report_branding import ReportBranding, fetch_logo_bytes, get_report_branding, theme_tint
 
 _is_money_header = is_money_header
 _row_is_total = row_is_total
@@ -115,7 +116,7 @@ def generate_pdf_report_platypus(
     story.append(Paragraph(title, s["title"]))
     if subtitle:
         story.append(Paragraph(subtitle, s["subtitle"]))
-    now = datetime.now().strftime("%d/%m/%Y %H:%M")
+    now = datetime.now(ZoneInfo("Asia/Jakarta")).strftime("%d/%m/%Y %H:%M WIB")
     meta = f"Dicetak: {now}"
     if generated_by:
         meta += f" · oleh {generated_by}"
@@ -135,7 +136,7 @@ def generate_pdf_report_platypus(
             ]
             for r in table_rows
         ]
-        tbl = Table(data, repeatRows=1)
+        tbl = Table(data, colWidths=[doc.width * weight for weight in column_weights(table_headers)], repeatRows=1)
         style_cmds: list[tuple] = [
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(f"#{primary}")),
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
@@ -146,14 +147,14 @@ def generate_pdf_report_platypus(
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ("LEFTPADDING", (0, 0), (-1, -1), 4),
             ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-            ("TOPPADDING", (0, 0), (-1, -1), 3),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ("TOPPADDING", (0, 0), (-1, -1), 7),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
         ]
         for ci in money_cols:
             style_cmds.append(("ALIGN", (ci, 0), (ci, -1), "RIGHT"))
         for r_idx, row in enumerate(table_rows, start=1):
             if _row_is_total(row):
-                style_cmds.append(("BACKGROUND", (0, r_idx), (-1, r_idx), colors.HexColor("#DCE8F8")))
+                style_cmds.append(("BACKGROUND", (0, r_idx), (-1, r_idx), colors.HexColor("#" + theme_tint(primary))))
                 style_cmds.append(("FONTNAME", (0, r_idx), (-1, r_idx), "Helvetica-Bold"))
         tbl.setStyle(TableStyle(style_cmds))
         story.append(tbl)

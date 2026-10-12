@@ -64,12 +64,54 @@ def test_generate_word_report_is_a_valid_docx_with_letterhead_and_table():
     import io
 
     doc = Document(io.BytesIO(blob))
-    body_text = "\n".join(p.text for p in doc.paragraphs)
+    body_text = "\n".join(p.text for p in doc.paragraphs) + "\n" + "\n".join(c.text for t in doc.tables for r in t.rows for c in r.cells)
     assert "LABA RUGI" in body_text
     assert "Jan 2024" in body_text
-    assert len(doc.tables) == 2  # data table + signature table
-    header_cells = [c.text for c in doc.tables[0].rows[0].cells]
+    assert len(doc.tables) == 3  # invoice-style letterhead, data, signatures
+    header_cells = [c.text for c in doc.tables[1].rows[0].cells]
     assert header_cells == SAMPLE_HEADERS
+    assert round(doc.sections[0].page_width / 36000) == 210
+    assert round(doc.sections[0].page_height / 36000) == 297
+    assert doc.tables[1].rows[0]._tr.xpath('./w:trPr/w:tblHeader')
+
+
+def test_logo_theme_ignores_white_background_and_embeds_profile_logo(monkeypatch):
+    import io
+    from dataclasses import replace
+    from PIL import Image
+    from modules.siabumdes import report_branding
+    logo = Image.new('RGB', (32, 32), 'white')
+    for x in range(16):
+        for y in range(32):
+            logo.putpixel((x, y), (20, 140, 90))
+    buffer = io.BytesIO()
+    logo.save(buffer, format='PNG')
+    monkeypatch.setattr(report_branding, 'fetch_logo_bytes', lambda url: buffer.getvalue())
+    original = replace(report_branding.get_report_branding(), logo_url='https://example.invalid/profile-logo.png')
+    branding = report_branding.branding_with_logo_theme(original)
+    assert branding.primary_color != original.primary_color
+    html = build_report_html(title='Neraca', branding=branding)
+    assert branding.logo_url in html and '#' + branding.primary_color in html
+    monkeypatch.setattr(report_branding, 'fetch_logo_bytes', lambda url: None)
+    assert report_branding.branding_with_logo_theme(original) == original
+
+
+@pytest.mark.asyncio
+async def test_balance_and_cash_exports_keep_official_groups_and_totals(monkeypatch):
+    from unittest.mock import AsyncMock
+    monkeypatch.setenv('DATABASE_URL', 'postgresql://placeholder@localhost/placeholder')
+    from modules.siabumdes.adapters.api.v1 import reports_router
+    service = AsyncMock()
+    service.neraca.return_value = {'aset': [{'code': '1', 'name': 'Kas', 'amount': 500}], 'kewajiban': [], 'ekuitas': [], 'total_aset': 500, 'total_kewajiban': 0, 'total_ekuitas': 500, 'total_pasiva': 500}
+    service.arus_kas.return_value = {'kas_masuk': [], 'kas_keluar': [], 'total_masuk': 500, 'total_keluar': 200, 'arus_kas_bersih': 300}
+    monkeypatch.setattr(reports_router, 'ReportingService', lambda session: service)
+    monkeypatch.setattr(reports_router, '_scope', AsyncMock(return_value=None))
+    _, _, _, rows = await reports_router._materialize(None, None, 'neraca', None, None, '2026-10-12', None, None)
+    assert ['ASET', '', ''] in rows and ['', 'Total Aset', 500] in rows
+    assert ['', 'Total Kewajiban dan Ekuitas', 500] in rows
+    _, _, _, rows = await reports_router._materialize(None, None, 'arus-kas', '2026-10-01', '2026-10-12', None, None, None)
+    assert ['KAS MASUK', '', ''] in rows and ['KAS KELUAR', '', ''] in rows
+    assert ['', 'Arus Kas Bersih', 300] in rows
 
 
 @pytest.mark.asyncio

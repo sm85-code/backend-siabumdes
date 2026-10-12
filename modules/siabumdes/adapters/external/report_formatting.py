@@ -21,6 +21,12 @@ def is_money_header(h: str) -> bool:
     )
 
 
+def column_weights(headers: list[str]) -> list[float]:
+    weights = [40 if any(word in h.lower() for word in ('nama', 'uraian', 'keterangan')) else 24 if is_money_header(h) else 16 for h in headers]
+    total = sum(weights) or 1
+    return [weight / total for weight in weights]
+
+
 def row_is_total(row: list[Any]) -> bool:
     """True for a genuine total/summary line (short label + amount), never
     for a long free-text note. Without the length guard, a CaLK policy

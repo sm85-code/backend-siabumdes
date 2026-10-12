@@ -20,7 +20,8 @@ from modules.siabumdes.application.reporting import ReportingService
 from modules.siabumdes.money_json import money_str, stringify_money_fields
 from shared.config import REPORT_READ_LEVEL
 from shared.database import get_db
-from modules.siabumdes.report_branding import ReportBranding, branding_from_org_profile
+from modules.siabumdes.report_branding import ReportBranding, branding_from_org_profile, branding_with_logo_theme
+from modules.siabumdes.infrastructure.models import UnitUsaha
 
 router = APIRouter(prefix="/api", tags=["reports"])
 READ = require_roles(*REPORT_READ_LEVEL)
@@ -283,8 +284,12 @@ async def report_pdf(
         subtitle = f"{start_date} s.d. {end_date}"
     elif as_of_date:
         subtitle = f"Per {as_of_date}"
-    landscape = report_key in {"ledger", "buku-besar"}
-    branding = branding_from_org_profile(await get_org_profile(session))
+    landscape = report_key in {"ledger", "buku-besar"} or len(headers) > 4
+    branding = await run_in_threadpool(branding_with_logo_theme, branding_from_org_profile(await get_org_profile(session)))
+    effective_unit = await _scope(session, user, unit_usaha_id)
+    unit = await session.get(UnitUsaha, effective_unit) if effective_unit else None
+    entity = 'Perbandingan Unit Usaha (pembukuan terpisah)' if report_key == 'per-unit' else f'{unit.name} ({unit.code})' if unit else 'BUMDES Pusat'
+    subtitle = entity + (' · ' + subtitle if subtitle else '')
     return await _pdf(title, headers, rows, subtitle, landscape=landscape, branding=branding)
 
 
@@ -307,8 +312,12 @@ async def report_excel(
         subtitle = f"{start_date} s.d. {end_date}"
     elif as_of_date:
         subtitle = f"Per {as_of_date}"
-    landscape = report_key in {"ledger", "buku-besar"}
-    branding = branding_from_org_profile(await get_org_profile(session))
+    landscape = report_key in {"ledger", "buku-besar"} or len(headers) > 4
+    branding = await run_in_threadpool(branding_with_logo_theme, branding_from_org_profile(await get_org_profile(session)))
+    effective_unit = await _scope(session, user, unit_usaha_id)
+    unit = await session.get(UnitUsaha, effective_unit) if effective_unit else None
+    entity = 'Perbandingan Unit Usaha (pembukuan terpisah)' if report_key == 'per-unit' else f'{unit.name} ({unit.code})' if unit else 'BUMDES Pusat'
+    subtitle = entity + (' · ' + subtitle if subtitle else '')
     return await _xlsx(title, headers, rows, subtitle, landscape=landscape, branding=branding)
 
 
@@ -331,8 +340,12 @@ async def report_word(
         subtitle = f"{start_date} s.d. {end_date}"
     elif as_of_date:
         subtitle = f"Per {as_of_date}"
-    landscape = report_key in {"ledger", "buku-besar"}
-    branding = branding_from_org_profile(await get_org_profile(session))
+    landscape = report_key in {"ledger", "buku-besar"} or len(headers) > 4
+    branding = await run_in_threadpool(branding_with_logo_theme, branding_from_org_profile(await get_org_profile(session)))
+    effective_unit = await _scope(session, user, unit_usaha_id)
+    unit = await session.get(UnitUsaha, effective_unit) if effective_unit else None
+    entity = 'Perbandingan Unit Usaha (pembukuan terpisah)' if report_key == 'per-unit' else f'{unit.name} ({unit.code})' if unit else 'BUMDES Pusat'
+    subtitle = entity + (' · ' + subtitle if subtitle else '')
     return await _docx(title, headers, rows, subtitle, landscape=landscape, branding=branding)
 
 
@@ -366,12 +379,22 @@ async def _materialize(
         if not as_of:
             raise HTTPException(status_code=400, detail="as_of_date wajib")
         data = await svc.neraca(as_of, unit_id)
-        rows = [[r["code"], r["name"], r["amount"]] for r in data["aset"] + data["kewajiban"] + data["ekuitas"]]
+        rows = []
+        for key, label, total in [('aset', 'ASET', 'total_aset'), ('kewajiban', 'KEWAJIBAN', 'total_kewajiban'), ('ekuitas', 'EKUITAS', 'total_ekuitas')]:
+            rows.append([label, '', ''])
+            rows.extend([[r['code'], r['name'], r['amount']] for r in data[key]])
+            rows.append(['', 'Total ' + label.title(), data[total]])
+        rows.append(['', 'Total Kewajiban dan Ekuitas', data['total_pasiva']])
         return data, "Neraca", ["Kode", "Nama", "Nominal"], rows
     if report_key == "arus-kas":
         start, end = _need_dates(start_date, end_date)
         data = await svc.arus_kas(start, end, unit_id)
-        rows = [[i["date"], i["description"], i["amount"]] for i in data["kas_masuk"] + data["kas_keluar"]]
+        rows = []
+        for key, label, total in [('kas_masuk', 'KAS MASUK', 'total_masuk'), ('kas_keluar', 'KAS KELUAR', 'total_keluar')]:
+            rows.append([label, '', ''])
+            rows.extend([[i['date'], i['description'], i['amount']] for i in data[key]])
+            rows.append(['', 'Total ' + label.title(), data[total]])
+        rows.append(['', 'Arus Kas Bersih', data['arus_kas_bersih']])
         return data, "Arus Kas", ["Tanggal", "Uraian", "Nominal"], rows
     if report_key == "perubahan-ekuitas":
         start, end = _need_dates(start_date, end_date)

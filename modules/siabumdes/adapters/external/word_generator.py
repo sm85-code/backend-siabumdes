@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import io
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import Any, Optional
 
 from docx import Document
@@ -15,8 +16,8 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 from docx.shared import Pt, RGBColor, Cm
 
-from modules.siabumdes.adapters.external.report_formatting import format_money, is_money_header, looks_numeric, row_is_total
-from modules.siabumdes.report_branding import ReportBranding, fetch_logo_bytes, get_report_branding
+from modules.siabumdes.adapters.external.report_formatting import column_weights, format_money, is_money_header, looks_numeric, row_is_total
+from modules.siabumdes.report_branding import ReportBranding, fetch_logo_bytes, get_report_branding, theme_tint
 
 _is_money_header = is_money_header
 _row_is_total = row_is_total
@@ -62,6 +63,7 @@ def generate_word_report(
 
     doc = Document()
     section = doc.sections[0]
+    section.page_width, section.page_height = Cm(21), Cm(29.7)
     if landscape:
         section.orientation = 1  # WD_ORIENT.LANDSCAPE
         section.page_width, section.page_height = section.page_height, section.page_width
@@ -73,38 +75,33 @@ def generate_word_report(
     style.font.name = "Calibri"
     style.font.size = Pt(10)
 
+    header = doc.add_table(rows=1, cols=2)
+    header.alignment = WD_TABLE_ALIGNMENT.CENTER
+    header.autofit = False
+    available = section.page_width - section.left_margin - section.right_margin
+    header.columns[0].width = int(available * .58)
+    header.columns[1].width = int(available * .42)
+    identity, document = header.rows[0].cells
+    identity.width, document.width = int(available * .58), int(available * .42)
     logo_bytes = fetch_logo_bytes(branding.logo_url) if branding.logo_url else None
     if logo_bytes:
         try:
-            logo_p = doc.add_paragraph()
-            logo_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            logo_p.paragraph_format.space_after = Pt(2)
-            logo_p.add_run().add_picture(io.BytesIO(logo_bytes), height=Cm(1.6))
-        except Exception:  # noqa: BLE001 -- a broken/unsupported logo must never break the report
+            identity.paragraphs[0].add_run().add_picture(io.BytesIO(logo_bytes), height=Cm(1.6))
+        except Exception:
             pass
-
-    org_p = doc.add_paragraph()
-    org_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    org_run = org_p.add_run(branding.org_name)
-    org_run.bold = True
-    org_run.font.size = Pt(15)
-    org_run.font.color.rgb = primary_rgb
-    org_p.paragraph_format.space_after = Pt(1)
-
-    legal_p = doc.add_paragraph()
-    legal_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    legal_run = legal_p.add_run(branding.org_legal_name)
-    legal_run.font.size = Pt(9)
-    legal_run.font.color.rgb = RGBColor(0x44, 0x44, 0x44)
-    legal_p.paragraph_format.space_after = Pt(1)
-
+    org = identity.add_paragraph().add_run(branding.org_name)
+    org.bold, org.font.size, org.font.color.rgb = True, Pt(14), primary_rgb
+    identity.add_paragraph(branding.org_legal_name)
     if branding.address_block:
-        addr_p = doc.add_paragraph()
-        addr_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        addr_run = addr_p.add_run(branding.address_block.replace("\n", " · "))
-        addr_run.font.size = Pt(8)
-        addr_run.font.color.rgb = RGBColor(0x55, 0x55, 0x55)
-        addr_p.paragraph_format.space_after = Pt(4)
+        identity.add_paragraph(branding.address_block)
+    _set_cell_text(document, title.upper(), bold=True, size=13, align=WD_ALIGN_PARAGRAPH.CENTER)
+    _shade_cell(document, theme_tint(primary_hex))
+    if subtitle:
+        paragraph = document.add_paragraph(subtitle)
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    for cell in header.rows[0].cells:
+        for paragraph in cell.paragraphs:
+            paragraph.paragraph_format.space_after = Pt(3)
 
     rule_p = doc.add_paragraph()
     rule_fmt = rule_p.paragraph_format
@@ -115,22 +112,7 @@ def generate_word_report(
     pbdr.append(bottom)
     pPr.append(pbdr)
 
-    title_p = doc.add_paragraph()
-    title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    title_run = title_p.add_run(title.upper())
-    title_run.bold = True
-    title_run.font.size = Pt(13)
-    title_p.paragraph_format.space_after = Pt(2)
-
-    if subtitle:
-        sub_p = doc.add_paragraph()
-        sub_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        sub_run = sub_p.add_run(subtitle)
-        sub_run.font.size = Pt(10)
-        sub_run.font.color.rgb = RGBColor(0x44, 0x44, 0x44)
-        sub_p.paragraph_format.space_after = Pt(2)
-
-    now = datetime.now().strftime("%d/%m/%Y %H:%M")
+    now = datetime.now(ZoneInfo("Asia/Jakarta")).strftime("%d/%m/%Y %H:%M WIB")
     meta = f"Dicetak: {now}"
     if generated_by:
         meta += f" · oleh {generated_by}"
@@ -148,7 +130,21 @@ def generate_word_report(
         table = doc.add_table(rows=1, cols=len(headers))
         table.alignment = WD_TABLE_ALIGNMENT.CENTER
         table.style = "Table Grid"
+        table.autofit = False
+        available_width = section.page_width - section.left_margin - section.right_margin
+        for column, weight in zip(table.columns, column_weights(headers)):
+            column.width = int(available_width * weight)
+        for row in table.rows:
+            for cell, weight in zip(row.cells, column_weights(headers)):
+                cell.width = int(available_width * weight)
 
+        properties = table.rows[0]._tr.get_or_add_trPr()
+        properties.append(properties.makeelement(qn('w:tblHeader'), {}))
+        table_properties = table._tbl.tblPr
+        margins = table_properties.makeelement(qn('w:tblCellMar'), {})
+        for side in ('top', 'bottom', 'left', 'right'):
+            margins.append(margins.makeelement(qn('w:' + side), {qn('w:w'): '120', qn('w:type'): 'dxa'}))
+        table_properties.append(margins)
         for i, h in enumerate(headers):
             cell = table.rows[0].cells[i]
             align = WD_ALIGN_PARAGRAPH.RIGHT if i in money_cols else WD_ALIGN_PARAGRAPH.LEFT
@@ -158,6 +154,8 @@ def generate_word_report(
         for row in rows:
             is_total = _row_is_total(row)
             cells = table.add_row().cells
+            for cell, weight in zip(cells, column_weights(headers)):
+                cell.width = int(available_width * weight)
             for i, value in enumerate(row):
                 is_num = i in money_cols and looks_numeric(value)
                 if is_num:
@@ -167,7 +165,7 @@ def generate_word_report(
                 align = WD_ALIGN_PARAGRAPH.RIGHT if is_num else WD_ALIGN_PARAGRAPH.LEFT
                 _set_cell_text(cells[i], text, bold=is_total, size=9, align=align)
                 if is_total:
-                    _shade_cell(cells[i], "DCE8F8")
+                    _shade_cell(cells[i], theme_tint(primary_hex))
 
     doc.add_paragraph().paragraph_format.space_after = Pt(20)
 

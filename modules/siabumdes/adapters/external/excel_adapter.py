@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from decimal import Decimal
 from typing import Any, Optional
 
@@ -11,7 +12,7 @@ from openpyxl.drawing.image import Image as XlImage
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-from modules.siabumdes.report_branding import ReportBranding, fetch_logo_bytes, get_report_branding
+from modules.siabumdes.report_branding import ReportBranding, fetch_logo_bytes, get_report_branding, theme_tint
 
 
 def parse_excel_rows(
@@ -82,7 +83,7 @@ def generate_excel_report(
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
     header_font = Font(bold=True, color="FFFFFF", size=10)
     header_fill = PatternFill("solid", fgColor=primary)
-    total_fill = PatternFill("solid", fgColor="DCE8F8")
+    total_fill = PatternFill("solid", fgColor=theme_tint(primary))
     currency_format = '"Rp"#,##0.00'
     money_cols = {i + 1 for i, h in enumerate(headers) if _is_money_header(h)}
     span = max(len(headers), 3)
@@ -92,8 +93,9 @@ def generate_excel_report(
     if logo_bytes:
         try:
             xl_logo = XlImage(io.BytesIO(logo_bytes))
-            xl_logo.height = 46
-            xl_logo.width = 46
+            scale = min(46 / xl_logo.height, 64 / xl_logo.width)
+            xl_logo.height *= scale
+            xl_logo.width *= scale
             ws.add_image(xl_logo, "A1")
             ws.row_dimensions[1].height = 36
         except Exception:  # noqa: BLE001 -- a broken/unsupported logo must never break the report
@@ -128,7 +130,7 @@ def generate_excel_report(
         sc.alignment = Alignment(horizontal="center")
         row_cursor += 1
 
-    now = datetime.now().strftime("%d/%m/%Y %H:%M")
+    now = datetime.now(ZoneInfo("Asia/Jakarta")).strftime("%d/%m/%Y %H:%M WIB")
     meta = f"Dicetak: {now}"
     if generated_by:
         meta += f" · oleh {generated_by}"
@@ -168,10 +170,19 @@ def generate_excel_report(
                 max_len = max(max_len, min(len(str(row[col - 1])), 40))
         ws.column_dimensions[letter].width = max(max_len + 4, 12)
 
+    for row in ws.iter_rows(min_row=header_row, max_row=header_row + len(rows)):
+        for cell in row:
+            cell.alignment = Alignment(horizontal=cell.alignment.horizontal or 'left', vertical='center', wrap_text=True, indent=1)
+    ws.row_dimensions[header_row].height = 30
+    for row_index in range(header_row + 1, header_row + len(rows) + 1):
+        line_count = max((sum(max(1, (len(line) + max(8, int(ws.column_dimensions[c.column_letter].width) - 4) - 1) // max(8, int(ws.column_dimensions[c.column_letter].width) - 4)) for line in str(c.value or '').split('\n')) for c in ws[row_index]), default=1)
+        ws.row_dimensions[row_index].height = min(400, max(24, line_count * 14 + 8))
     ws.freeze_panes = f"A{header_row + 1}"
     ws.print_title_rows = f"{header_row}:{header_row}"
     ws.page_setup.orientation = "landscape" if landscape else "portrait"
-    ws.page_setup.fitToPage = True
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+    ws.oddFooter.right.text = 'Halaman &P / &N'
     ws.page_setup.fitToWidth = 1
     ws.page_setup.fitToHeight = 0
     ws.page_margins.left = 0.5

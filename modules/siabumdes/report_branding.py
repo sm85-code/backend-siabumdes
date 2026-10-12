@@ -14,6 +14,8 @@ import urllib.request
 from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Optional
+from dataclasses import replace
+import io
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +105,39 @@ def branding_from_org_profile(profile) -> ReportBranding:
         primary_color=(profile.primary_color or "1F4E79").lstrip("#"),
         logo_url=profile.logo_url or "",
     )
+
+
+def theme_tint(color: str) -> str:
+    return ''.join(f'{round(int(color[i:i + 2], 16) * .12 + 255 * .88):02X}' for i in (0, 2, 4))
+
+
+def branding_with_logo_theme(branding: ReportBranding) -> ReportBranding:
+    """Use the dominant colored logo pixels; retain profile color if logo is unavailable."""
+    raw = fetch_logo_bytes(branding.logo_url) if branding.logo_url else None
+    if not raw:
+        return branding
+    try:
+        from PIL import Image
+        image = Image.open(io.BytesIO(raw)).convert('RGBA')
+        image.thumbnail((64, 64))
+        buckets = {}
+        for r, g, b, alpha in image.getdata():
+            if alpha < 128 or max(r, g, b) - min(r, g, b) < 35:
+                continue
+            key = (r // 32 * 32, g // 32 * 32, b // 32 * 32)
+            buckets[key] = buckets.get(key, 0) + 1
+        if not buckets:
+            return branding
+        rgb = max(buckets, key=buckets.get)
+        # Keep white header lettering readable on light logo colors.
+        def luminance(values):
+            linear = [v / 255 / 12.92 if v / 255 <= .04045 else ((v / 255 + .055) / 1.055) ** 2.4 for v in values]
+            return sum(v * w for v, w in zip(linear, (.2126, .7152, .0722)))
+        while luminance(rgb) > .18:
+            rgb = tuple(round(v * .9) for v in rgb)
+        return replace(branding, primary_color=''.join(f'{v:02X}' for v in rgb))
+    except Exception:
+        return branding
 
 
 def fetch_logo_bytes(url: str, *, timeout: float = 5.0) -> Optional[bytes]:

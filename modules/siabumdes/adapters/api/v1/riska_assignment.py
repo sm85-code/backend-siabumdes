@@ -31,6 +31,14 @@ async def assignment_message(session, user, message):
         return {'message': 'Siapa pengguna yang akan dibantu? Sebutkan nama atau username lengkap agar tidak salah penugasan.',
                 'rows': [{'Nama': u.name, 'Username': u.username, 'Role': public_role(u.role)} for u in choices[:30]]}
     recipient = candidates[0]
+    return await prepare_assignment(session, user, recipient, allowed)
+
+
+async def prepare_assignment(session, user, recipient, allowed):
+    if public_role(user.role) != 'admin':
+        raise HTTPException(403, 'Penugasan Riska hanya dapat diubah Admin')
+    if not recipient.active or public_role(recipient.role) == 'admin':
+        raise HTTPException(422, 'Pilih pengguna aktif selain Admin.')
     from modules.siabumdes.adapters.api.v1.riska_dialogue import store
     payload = {'kind': 'assignment', 'recipient_id': recipient.id, 'allowed': allowed,
                'recipient_role': public_role(recipient.role), 'recipient_unit': recipient.unit_usaha_id}

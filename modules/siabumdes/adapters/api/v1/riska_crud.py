@@ -407,11 +407,13 @@ async def related_records(session, resource, data, unit):
     return records
 
 
-async def handle_crud(session, user, body):
+async def handle_crud(session, user, body, *, structured_state=None):
     from .riska_dialogue import expired, store, resolve_units
-    command = parse_command(body.message)
+    command = parse_command(body.message) if structured_state is None else None
     row = None
-    if body.conversation_id:
+    if structured_state is not None:
+        state = structured_state
+    elif body.conversation_id:
         row = await session.scalar(select(RiskaDraft).where(RiskaDraft.id == body.conversation_id, RiskaDraft.user_id == user.id).with_for_update())
         if not row or row.payload.get('kind') != 'crud_dialogue':
             return None

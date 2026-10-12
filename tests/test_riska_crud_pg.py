@@ -21,59 +21,6 @@ crud_context = fixture_source.context
 
 
 @pytest.mark.asyncio
-async def test_task_memory_revises_only_capital_and_invalidates_old_draft(crud_context, monkeypatch):
-    from unittest.mock import AsyncMock
-    from modules.siabumdes.application import riska_ai
-    session, admin, _, other, _, unit, *_ = crud_context
-    monkeypatch.setattr(riska_ai, 'ready', lambda provider: True)
-    model = AsyncMock(side_effect=[
-        (riska_ai.Interpretation(action='command', command='tambah mitra', reply='Draf siap.', task=riska_ai.TaskUpdate(resource='mitra', fields=[riska_ai.TaskField(name='name', value='Suryaman'), riska_ai.TaskField(name='capital', value='5 juta')])), {'model': 'mock-sol'}),
-        (riska_ai.Interpretation(action='command', command='tambah mitra', reply='Modal saya perbarui.', task=riska_ai.TaskUpdate(resource='mitra', fields=[riska_ai.TaskField(name='capital', value='6 juta')])), {'model': 'mock-sol'}),
-    ])
-    monkeypatch.setattr(riska_ai, 'interpret', model)
-    first = await chat(ChatIn(message='Tambah mitra Suryaman modal 5 juta', unit_usaha_id=unit.id, ai_mode='auto'), admin, session)
-    assert first['can_revise'] and first.get('draft_id')
-    with pytest.raises(HTTPException):
-        await chat(ChatIn(message='modalnya jadi 6 juta', unit_usaha_id=unit.id, ai_mode='auto', revision_draft_id=first['draft_id']), other, session)
-    revised = await chat(ChatIn(message='modalnya jadi 6 juta', unit_usaha_id=unit.id, ai_mode='auto', revision_draft_id=first['draft_id'], ai_conversation_id=first['ai_conversation_id']), admin, session)
-    assert revised.get('draft_id') and revised['draft_id'] != first['draft_id']
-    data = (await session.get(RiskaDraft, revised['draft_id'])).payload['data']
-    assert data['name'] == 'Suryaman' and data['capital'] == '6000000'
-    assert not await session.scalar(select(YieldPartner).where(YieldPartner.name == 'Suryaman'))
-    with pytest.raises(HTTPException) as error:
-        await execute(first['draft_id'], admin, session)
-    assert error.value.status_code == 409
-    await execute(revised['draft_id'], admin, session)
-    partner = await session.scalar(select(YieldPartner).where(YieldPartner.name == 'Suryaman'))
-    assert partner.capital == Decimal('6000000')
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize('replacement', [
-    {'action': 'command', 'command': 'hapus mitra', 'reply': 'Hapus.'},
-    {'action': 'command', 'command': 'tambah mitra', 'reply': 'Pindah.',
-     'task': {'resource': 'mitra', 'fields': [{'name': 'entitas', 'value': 'BUMDES'}]}},
-])
-async def test_revision_rejects_unrelated_command_or_entity_without_consuming_draft(crud_context, monkeypatch, replacement):
-    from unittest.mock import AsyncMock
-    from modules.siabumdes.application import riska_ai
-    session, admin, _, _, _, unit, *_ = crud_context
-    monkeypatch.setattr(riska_ai, 'ready', lambda provider: True)
-    monkeypatch.setattr(riska_ai, 'interpret', AsyncMock(side_effect=[
-        (riska_ai.Interpretation(action='command', command='tambah mitra', reply='Draf siap.',
-         task=riska_ai.TaskUpdate(resource='mitra', fields=[riska_ai.TaskField(name='name', value='Suryaman'), riska_ai.TaskField(name='capital', value='5 juta')])), {'model': 'mock-sol'}),
-        (riska_ai.Interpretation(**replacement), {'model': 'mock-sol'}),
-    ]))
-    first = await chat(ChatIn(message='Tambah mitra Suryaman modal 5 juta', unit_usaha_id=unit.id, ai_mode='auto'), admin, session)
-    with pytest.raises(HTTPException) as error:
-        await chat(ChatIn(message='modalnya jadi 6 juta', unit_usaha_id=unit.id, ai_mode='auto',
-                          revision_draft_id=first['draft_id']), admin, session)
-    assert error.value.status_code == 422
-    assert not (await session.get(RiskaDraft, first['draft_id'])).consumed
-    assert not await session.scalar(select(YieldPartner).where(YieldPartner.name == 'Suryaman'))
-
-
-@pytest.mark.asyncio
 async def test_profit_transaction_details_reconcile_and_exclude_other_entities_and_closing(crud_context):
     from datetime import date
     from modules.siabumdes.application.reporting import ReportingService
@@ -90,28 +37,6 @@ async def test_profit_transaction_details_reconcile_and_exclude_other_entities_a
     assert sum(Decimal(str(row['amount'])) for row in rows) == Decimal(str(data['total_pendapatan']))
     assert any(row['description'] == 'Koreksi penjualan' and row['amount'] == -2000 for row in rows)
     assert not any(row['description'] in {'Penutupan', 'Entitas lain'} for row in rows)
-
-
-@pytest.mark.asyncio
-async def test_auto_ai_clarifies_before_internal_and_remembers_short_answers(crud_context, monkeypatch):
-    from unittest.mock import AsyncMock
-    from modules.siabumdes.application import riska_ai
-    session, admin, _, _, _, air, *_ = crud_context
-    monkeypatch.setattr(riska_ai, 'ready', lambda provider: True)
-    model = AsyncMock(side_effect=[
-        (riska_ai.Interpretation(action='clarify', command='', reply='Tentu, siapa nama mitranya?'), {'model': 'mock-sol'}),
-        (riska_ai.Interpretation(action='clarify', command='', reply='Baik, SURYAMAN. Berapa modalnya?'), {'model': 'mock-sol'}),
-        (riska_ai.Interpretation(action='command', command='tambah mitra {"name":"SURYAMAN","capital":"5 jt","entitas":"UU04"}', reply='Baik'), {'model': 'mock-sol'}),
-    ])
-    monkeypatch.setattr(riska_ai, 'interpret', model)
-    first = await chat(ChatIn(message='tambah mitra', ai_mode='auto', unit_usaha_id=air.id), admin, session)
-    assert not first.get('conversation_id') and not first.get('draft_id')
-    second = await chat(ChatIn(message='SURYAMAN', ai_mode='auto', unit_usaha_id=air.id, ai_conversation_id=first['ai_conversation_id']), admin, session)
-    assert not second.get('conversation_id') and not second.get('draft_id')
-    final = await chat(ChatIn(message='5 jt', ai_mode='auto', unit_usaha_id=air.id, ai_conversation_id=second['ai_conversation_id']), admin, session)
-    assert final.get('draft_id'), final
-    assert model.call_args.args[3]['permintaan_belum_selesai'] == ['tambah mitra', 'SURYAMAN']
-    assert not await session.scalar(select(YieldPartner).where(YieldPartner.name == 'SURYAMAN'))
 
 
 @pytest.mark.asyncio
@@ -383,78 +308,6 @@ async def test_new_command_replaces_pending_dialogue_and_inline_unit(crud_contex
 
 
 @pytest.mark.asyncio
-async def test_model_interpretation_uses_scoped_drafts_and_no_implicit_write(crud_context, monkeypatch):
-    from unittest.mock import AsyncMock
-    from modules.siabumdes.application import riska_ai
-    session, admin, manager, _, _, air, *_ = crud_context
-    monkeypatch.setattr(riska_ai, 'ready', lambda provider: True)
-    interpret = AsyncMock(return_value=(riska_ai.Interpretation(action='command', command='tambah mitra ke UU04', reply='Baik'), {'model': 'mock-sol'}))
-    monkeypatch.setattr(riska_ai, 'interpret', interpret)
-    reply = await chat(ChatIn(message='bikinin data baru dong', ai_mode='sol'), admin, session)
-    assert reply.get('conversation_id') and 'nama lengkap' in reply['message']
-    assert (await session.get(RiskaDraft, reply['conversation_id'])).unit_usaha_id == air.id
-    assert not await session.scalar(select(YieldPartner).where(YieldPartner.name == 'Baru'))
-    denied = await chat(ChatIn(message='boleh jelaskan sesuatu?', ai_mode='sol'), admin, session)
-    assert not denied.get('conversation_id') and not denied.get('draft_id')
-    with pytest.raises(HTTPException) as error:
-        await chat(ChatIn(message='bikinin data baru dong', ai_mode='sol', session_id='manager-session'), manager, session)
-    assert error.value.status_code == 403
-
-
-@pytest.mark.asyncio
-async def test_ai_budget_is_durable_and_provider_output_is_typed(crud_context, monkeypatch):
-    import json
-    import httpx
-    from unittest.mock import AsyncMock
-    from sqlalchemy.ext.asyncio import async_sessionmaker
-    from modules.siabumdes.application import riska_ai
-    session, admin, *_ = crud_context
-    await session.commit()
-    monkeypatch.setattr(riska_ai, 'SessionLocal', async_sessionmaker(session.bind, expire_on_commit=False))
-    monkeypatch.setenv('RISKA_AI_DAILY_USD', '0.06')
-    ident = await riska_ai.reserve(admin.id, 'mock')
-    assert ident
-    with pytest.raises(HTTPException) as quota:
-        await riska_ai.reserve(admin.id, 'mock')
-    assert quota.value.status_code == 429
-    monkeypatch.setenv('OPENAI_API_KEY', 'test-only')
-    monkeypatch.setattr(riska_ai, 'reserve', AsyncMock(return_value=ident))
-    monkeypatch.setattr(riska_ai, 'record', AsyncMock())
-    async def post(*args, **kwargs):
-        assert kwargs['json']['store'] is False
-        text = json.dumps({'action': 'clarify', 'command': '', 'reply': 'Boleh ceritakan kebutuhan Anda? Saya bantu, ya.'})
-        return httpx.Response(200, request=httpx.Request('POST', 'https://api.openai.com/v1/responses'), json={'status': 'completed', 'output': [{'type': 'message', 'content': [{'type': 'output_text', 'text': text}]}], 'usage': {'input_tokens': 40, 'output_tokens': 20}})
-    monkeypatch.setattr(riska_ai.httpx.AsyncClient, 'post', post)
-    result, usage = await riska_ai.interpret(admin, 'Bantu saya')
-    assert result.action == 'clarify' and usage['input_tokens'] == 40
-    riska_ai.record.assert_awaited_once_with(ident, 'succeeded', 40, 20)
-
-
-@pytest.mark.asyncio
-async def test_sonnet_protocol_and_invalid_output_fail_without_execution(crud_context, monkeypatch):
-    import httpx
-    from unittest.mock import AsyncMock
-    from modules.siabumdes.application import riska_ai
-    _, admin, *_ = crud_context
-    monkeypatch.setenv('ANTHROPIC_API_KEY', 'test-only')
-    monkeypatch.setattr(riska_ai, 'reserve', AsyncMock(return_value='call'))
-    monkeypatch.setattr(riska_ai, 'record', AsyncMock())
-    async def post(*args, **kwargs):
-        assert kwargs['headers']['anthropic-version'] == '2023-06-01'
-        return httpx.Response(200, request=httpx.Request('POST', 'https://api.anthropic.com/v1/messages'), json={'stop_reason': 'end_turn', 'content': [{'type': 'text', 'text': '```json\n{"action":"clarify","command":"","reply":"Boleh ceritakan kebutuhan Anda?"}\n```'}], 'usage': {'input_tokens': 20, 'output_tokens': 10}})
-    monkeypatch.setattr(riska_ai.httpx.AsyncClient, 'post', post)
-    result, usage = await riska_ai.interpret(admin, 'Bantu saya', 'sonnet')
-    assert result.action == 'clarify' and usage['provider'] == 'sonnet'
-    async def invalid(*args, **kwargs):
-        return httpx.Response(200, request=httpx.Request('POST', 'https://api.anthropic.com/v1/messages'), json={'stop_reason': 'end_turn', 'content': [{'type': 'text', 'text': 'not-json'}]})
-    monkeypatch.setattr(riska_ai.httpx.AsyncClient, 'post', invalid)
-    with pytest.raises(HTTPException) as error:
-        await riska_ai.interpret(admin, 'Bantu saya', 'sonnet')
-    assert error.value.status_code == 503
-    assert riska_ai.record.call_args.args == ('call', 'failed')
-
-
-@pytest.mark.asyncio
 async def test_wrong_partner_entity_requests_entity_not_repair_fields(crud_context):
     session, admin, _, _, toko, air, *_ = crud_context
     reply = await talk(session, admin, 'tambah mitra', [], toko)
@@ -475,44 +328,6 @@ async def test_report_period_followup_retains_original_question(crud_context):
     assert reply.get('rows') is not None and not reply.get('conversation_id'), reply
     assert '2026-01-01' in reply['message']
     assert (await session.get(RiskaDraft, first['conversation_id'])).consumed
-
-
-@pytest.mark.asyncio
-async def test_ai_followup_has_official_report_and_owned_history(crud_context, monkeypatch):
-    from unittest.mock import AsyncMock
-    from modules.siabumdes.application import riska_ai
-    session, admin, _, other, toko, *_ = crud_context
-    monkeypatch.setattr(riska_ai, 'ready', lambda provider: True)
-    mocked = AsyncMock(side_effect=[(riska_ai.Interpretation(action='command', command='laba rugi tahun ini', reply='Baik'), {'model': 'mock-sol'}), (riska_ai.Interpretation(action='explain', command='', reply='Berikut penjelasan laporan Anda.'), {'model': 'mock-sol'}), (riska_ai.Interpretation(action='explain', command='', reply='Berikut penjelasan laporan Anda.'), {'model': 'mock-sol'})])
-    monkeypatch.setattr(riska_ai, 'interpret', mocked)
-    first = await chat(ChatIn(message='jelaskan laba rugi tahun ini', unit_usaha_id=toko.id, ai_mode='sol'), admin, session)
-    assert first.get('rows') and first.get('ai_conversation_id')
-    follow = await chat(ChatIn(message='mengapa hasilnya begitu?', unit_usaha_id=toko.id, ai_mode='sol'), admin, session)
-    context = mocked.call_args.args[3]
-    assert context['laporan']['rows'] == first['rows']
-    assert context['percakapan'][0]['user'] == 'jelaskan laba rugi tahun ini'
-    assert follow['ai_conversation_id'] == first['ai_conversation_id']
-    with pytest.raises(HTTPException):
-        await chat(ChatIn(message='mengapa?', unit_usaha_id=toko.id, ai_mode='sol', ai_conversation_id=first['ai_conversation_id']), other, session)
-
-
-@pytest.mark.asyncio
-async def test_complete_transaction_instruction_does_not_reask_known_fields(crud_context, monkeypatch):
-    import json
-    from unittest.mock import AsyncMock
-    from modules.siabumdes.application import riska_ai
-    session, admin, _, _, toko, *_ = crud_context
-    session.add(TransactionType(code='sale', name='Penjualan', debit='1.1.01.15', credit='4.1.01.15', group_code=toko.code))
-    await session.flush()
-    command = 'tambah transaksi ' + json.dumps({'date': 'hari ini', 'transaction_type': 'Penjualan', 'description': 'Penjualan Baru', 'amount': '50 ribu', 'debit_account_code': '1.1.01.15', 'credit_account_code': '4.1.01.15', 'entitas': 'UU05'})
-    monkeypatch.setattr(riska_ai, 'ready', lambda provider: True)
-    monkeypatch.setattr(riska_ai, 'interpret', AsyncMock(return_value=(riska_ai.Interpretation(action='command', command=command, reply='Baik, saya siapkan drafnya.'), {'model': 'mock-sol'})))
-    before = await session.scalar(select(func.count(Transaction.id)))
-    reply = await chat(ChatIn(message='Input transaksi Penjualan hari ini, Penjualan Baru, nominal 50 ribu, debit 1.1.01.15 kredit 4.1.01.15 untuk UU05', ai_mode='auto', unit_usaha_id=toko.id), admin, session)
-    assert reply.get('draft_id') and not reply.get('conversation_id'), reply
-    assert await session.scalar(select(func.count(Transaction.id))) == before
-    await execute(reply['draft_id'], admin, session)
-    assert await session.scalar(select(func.count(Transaction.id))) == before + 1
 
 
 @pytest.mark.asyncio
@@ -538,19 +353,3 @@ async def test_six_unit_analysis_keeps_central_revenue_separate(crud_context):
     central = next(r for r in reply['rows'] if r['entitas'] == 'BUMDES Pusat')
     assert central['porsi_omzet_unit_persen'] == 'Tidak berlaku'
     assert 'bukan pendapatan Pusat' in reply['message']
-
-
-@pytest.mark.asyncio
-async def test_casual_field_reply_keeps_already_supplied_partner_name(crud_context, monkeypatch):
-    from unittest.mock import AsyncMock
-    from modules.siabumdes.application import riska_ai
-    session, admin, _, _, _, air, *_ = crud_context
-    first = await talk(session, admin, 'tambah mitra', ['Bu Ani'], air)
-    mocked = AsyncMock(return_value=(riska_ai.Interpretation(action='command', command='100 ribu', reply='Baik, modalnya saya sesuaikan.'), {'model': 'mock-sol'}))
-    monkeypatch.setattr(riska_ai, 'ready', lambda provider: True)
-    monkeypatch.setattr(riska_ai, 'interpret', mocked)
-    reply = await chat(ChatIn(message='sebenarnya modalnya seratus ribu', conversation_id=first['conversation_id'], unit_usaha_id=air.id, ai_mode='auto'), admin, session)
-    assert reply.get('draft_id') and not reply.get('conversation_id'), reply
-    pending = mocked.call_args.args[3]['pengisian']
-    assert pending['data']['name'] == 'Bu Ani' and pending['expecting'] == 'capital'
-    assert (await session.get(RiskaDraft, reply['draft_id'])).payload['data']['capital'] == '100000'

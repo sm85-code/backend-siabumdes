@@ -29,3 +29,14 @@ def test_twenty_calls_fit_new_daily_default():
     result = budget_summary(8, Decimal('0.48'), Decimal('1.20'), 20, now)
     assert result['remaining_calls'] == 12 and not result['exhausted']
     assert budget_summary(20, Decimal('1.20'), Decimal('1.20'), 20, now)['exhausted']
+
+
+def test_agent_periods_have_one_source_and_handle_year_boundary():
+    from datetime import date
+    import pytest
+    from pydantic import ValidationError
+    from modules.siabumdes.application.riska_agent_tools import Report
+    assert Report(report='profit_loss', last_months=6).dates(date(2026, 2, 10)) == (date(2025, 9, 1), date(2026, 2, 10))
+    assert Report(report='profit_loss', year=2026).dates(date(2026, 10, 12)) == (date(2026, 1, 1), date(2026, 10, 12))
+    with pytest.raises(ValidationError):
+        Report(report='profit_loss', year=2026, last_months=6)

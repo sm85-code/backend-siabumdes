@@ -1,39 +1,35 @@
-# Riska internal, Sol, dan Sonnet
+# Riska: agen percakapan dengan alat resmi
 
-Mode Otomatis, Sol, dan Sonnet memahami setiap pesan melalui AI terlebih dahulu, termasuk jawaban pendek dan lanjutan pengisian. Jika maksud atau field wajib belum jelas, AI menanyakan bagian yang kurang dengan konteks sebelumnya. Permintaan yang sudah jelas baru diteruskan ke kode internal untuk validasi, laporan resmi, dan draf. Tidak ada fallback diam-diam ke parser bila provider tidak tersedia atau kuota habis.
+Mode `auto`, `sol`, dan `sonnet` memakai pola agen marketplace ERP: pesan pengguna → model → alat terstruktur → hasil resmi → model. Model tidak menghasilkan kalimat perintah untuk parser. Klarifikasi dan koreksi ditangani dalam satu percakapan, dengan riwayat enam giliran, hasil laporan terakhir, dan status tugas yang terikat pengguna, role, versi login, entitas pilihan, serta sesi penugasan. Memori berakhir setelah satu jam; tidak menjadi izin eksekusi.
 
-Widget mengirim mode Otomatis secara eksplisit. Pemanggilan API tanpa ai_mode tetap memakai Internal untuk klien internal; mode Internal merupakan pilihan eksplisit tanpa token dan memakai parser yang ada. AI tidak punya SQL, shell, endpoint arbitrer, atau izin eksekusi langsung. Seluruh perubahan tetap menunggu tombol konfirmasi draf. Jawaban teks bukan otorisasi eksekusi.
+`auto` memilih Sol bila dikonfigurasi, kemudian Sonnet. Ini pemilihan provider, bukan delegasi multiagen. Provider yang gagal tidak dialihkan diam-diam. `OPENAI_API_KEY`, `OPENAI_MODEL` (default `gpt-6.1-sol`), `ANTHROPIC_API_KEY`, `RISKA_SONNET_MODEL` (default `claude-sonnet-5-5`) hanya berada pada backend. `RISKA_AI_ENABLED=false` mematikan agen AI; mode Internal tetap tersedia.
 
-Konfigurasi backend (key hanya di environment terenkripsi):
-- `OPENAI_API_KEY`, `OPENAI_MODEL` (default `gpt-6.1-sol`; juga mendukung `gpt-6-luna`).
-- `ANTHROPIC_API_KEY`, `RISKA_SONNET_MODEL` (default `claude-sonnet-5-5`; juga mendukung `claude-sonnet-4-6`).
-- `RISKA_AI_ENABLED` default true; false mematikan bantuan model, tidak mematikan Riska internal.
-- `RISKA_AI_DAILY_USD` default 1.20, `RISKA_AI_DAILY_CALLS` default 20. Batas berlaku bersama untuk SIABUMDES, terpisah dari ERP.
+## Alat
 
-Setiap panggilan mencadangkan USD 0.06 secara atomik sebelum request; cadangan tidak dikembalikan, termasuk kegagalan. Dengan default USD 1.20, paling banyak 20 panggilan sehari. Ini batas konservatif, bukan tagihan aktual. Untuk deployment yang memiliki override lama, tetapkan `RISKA_AI_DAILY_CALLS=20` dan `RISKA_AI_DAILY_USD=1.20`. Input dibatasi 12 KB dan output 1200 token; timeout 35 detik, tidak ada retry model otomatis. `riska_ai_budget` dan `riska_ai_calls` menyimpan cadangan, model, status dan jumlah token, tanpa prompt maupun API key. Startup initializer/Alembic 18 membuat tabel tambahan tanpa mengubah jurnal.
+- `daftar_unit`: daftar unit aktif sesuai hak pengguna.
+- `baca_laporan`: laba rugi/perbandingan atau kas; menerima scope dan tanggal, tahun, atau jumlah bulan terakhir.
+- `referensi_transaksi`: akun dan jenis transaksi yang benar-benar terdaftar.
+- `data_resmi`: baca/cari atau draf CRUD transaksi, akun, pengguna, unit, produk, mitra, pembayaran.
+- `draf_operasional`: stok masuk/keluar/rusak dan setoran imbal hasil.
+- `draf_strategis`: Admin saja, tutup buku/kunci periode/transfer bagi hasil.
+- `draf_penugasan`: Admin saja, aktifkan/akhiri bantuan untuk penerima tanpa meminjam hak Admin.
 
-Hak akses/role/sesi penugasan diperiksa lagi setelah respons model. Pengelola tetap terikat unit aktifnya dan tidak meminjam akses Admin. Setelah sesi selesai, penugasan berhenti seperti sebelumnya. Sapaan penerima penugasan menjelaskan bahwa Riska didesain Pa Saepul untuk membantu pekerjaan sesuai role. Admin tetap disapa Anda, tanpa Kak/nama.
+Semua alat memvalidasi parameter dan hak akses di backend. Pengelola hanya melihat unitnya sendiri. Perhitungan uang menggunakan layanan resmi dan Decimal. Akun biaya menunjukkan komponen, bukan bukti penyebab operasional. Gabungan antarentitas tanpa eliminasi bukan konsolidasi akuntansi resmi.
 
-Perbaikan CRUD: perintah CRUD baru menggantikan pengisian sebelumnya tanpa menyimpan data; entitas dalam kalimat `tambah mitra ke UU04` dikenali; nama/modal dapat diisi bertahap. Penghapusan yang tidak diizinkan workflow asal menjelaskan alasannya tanpa mengulang pertanyaan. Tidak menghapus jurnal generator langsung.
+`last_months=6` berarti awal lima bulan sebelum bulan berjalan sampai hari ini. `year=2026` berarti 1 Januari 2026 sampai hari ini bila tahun tersebut sedang berjalan; tahun lampau sampai 31 Desember. Bentuk periode saling eksklusif: koreksi mengganti periode lama.
 
-Verifikasi memakai PostgreSQL lokal terisolasi dan respons provider tiruan. Koneksi API dengan key DigitalOcean serta keberhasilan deployment belum dibuktikan oleh pengujian lokal. Uji produksi dengan pertanyaan/penjelasan dahulu; setiap pencatatan tetap menunggu pemeriksaan draf.
+## Perubahan dan konfirmasi
 
-## Konteks percakapan dan laporan tahunan
+Model hanya menyiapkan draf. Tidak ada alat eksekusi, shell, SQL, GitHub atau API bebas. Eksekusi/cancel memakai endpoint aplikasi yang sudah ada, dengan validasi pemilik, role/sesi, masa berlaku, snapshot target dan dependensi, serta penguncian transaksi. Draf yang mendukung revisi tetap pada resource/action/entitas awal; draf lama dinonaktifkan hanya setelah draf pengganti berhasil dibuat. Bila revisi perlu klarifikasi, draf lama tetap tersedia.
 
-Mode Otomatis/Sol/Sonnet memahami instruksi lengkap sebelum dispatch ke workflow resmi; hasil pembacaan dikembalikan untuk penjelasan. Mode Internal tetap tanpa model. Rincian transaksi yang sudah diberikan dapat diterjemahkan menjadi field typed dan divalidasi terhadap jenis transaksi/COA terdaftar, tanpa meminta ulang seluruh instruksi. Field yang benar-benar belum tersedia tetap ditanyakan.
+Percakapan lama dapat dibaca sebagai konteks migrasi, tetapi tidak mengaktifkan loop parser kedua. Mode Internal tetap memakai perintah langsung yang sudah dikenal; tombol pintasan melewati model untuk menghemat token. Teks bebas pada mode Agen memakai model, bukan fallback parser. ID operasi mencegah request agen yang sama memakai token/membuat draf lagi selama berada dalam enam giliran memori. Pemanggilan pengguna yang sama diserialisasi dengan lock PostgreSQL.
 
-Memori kerja memakai record `ai_history` per pengguna dan entitas, terikat role, versi sesi login dan sesi penugasan. Menyimpan paling banyak tiga pertukaran terakhir, hingga delapan pesan untuk permintaan yang sedang diklarifikasi, serta snapshot laporan resmi, berlaku satu jam sejak aktivitas. Snapshot bukan pembacaan live baru; pertanyaan data terbaru harus membaca ulang workflow. Berakhirnya penugasan membatalkan memori beserta draf. Pergantian entitas menghapus konteks widget; percakapan milik pengguna lain ditolak. Konteks model menerima tanggal Jakarta, daftar unit aktif, serta jenis transaksi/COA scoped bila dibutuhkan. Riwayat lama dikurangi jika melewati batas input; angka laporan tetap berasal dari service.
+## Batas dan kegagalan
 
-`tahun ini` berarti 1 Januari sampai hari ini; `tahun lalu` adalah tahun kalender sebelumnya; `tahun 2026` memakai tahun tersebut, sampai hari ini bila masih tahun berjalan. Klarifikasi periode memiliki conversation_id sehingga jawaban singkat melanjutkan laporan sebelumnya. `unit 1` dikenali dari kode aktif UU01, tanpa hardcode nama seed.
+Default `RISKA_AI_DAILY_CALLS=20`, `RISKA_AI_DAILY_USD=1.20`. Setiap panggilan provider mencadangkan USD 0.06 secara atomik, termasuk kegagalan. Angka ini cadangan pengendalian, bukan tagihan aktual. Kuota bersama SIABUMDES, terpisah dari ERP, reset pukul 00.00 WIB. Satu giliran agen dapat memakai beberapa panggilan; maksimal empat panggilan dan delapan alat. Provider timeout 40 detik, tanpa retry otomatis, output maksimal 2400 token dan konteks maksimal 60 KB.
 
-Perbandingan laba rugi menyertakan margin, rasio HPP+beban, tiga akun HPP/beban terbesar dan porsi omzet terhadap total unit yang ditampilkan. Semua indikator dihitung kode dengan Decimal. Pusat tidak masuk denominator kontribusi omzet unit. Komponen biaya bukan bukti penyebab operasional; analisis tidak boleh mengarang penyebab atau menyebut ringkasan tanpa eliminasi sebagai konsolidasi resmi.
+Widget menampilkan cadangan, status panggilan, sisa kuota, alasan kuota habis dan reset. Jika penjelasan AI gagal setelah laporan berhasil dibaca, hasil resmi tetap dikembalikan. Jika kuota habis sebelum alat berjalan, pengguna dapat memilih pintasan/Perintah langsung. Riwayat dan bukti alat tersimpan pada `ai_history`; jangan kirim kata sandi atau API key ke chat.
 
-## Percobaan memori tugas terstruktur
+## Verifikasi
 
-Selain riwayat singkat, Riska menyimpan resource, rincian yang sudah disebut, field yang kurang, dan status tugas tambah mitra/transaksi pada memori milik pengguna/entitas yang sama. Model hanya mengusulkan rincian; backend membatasi field dan memvalidasi melalui CRUD resmi. Belum memasang Hermes atau menjalankan shell/SQL dari model.
-
-Draf AI yang mendukung revisi mengembalikan can_revise. Pengguna boleh menjawab “modalnya jadi 6 juta” dengan revision_draft_id miliknya. Backend memeriksa pemilik, sesi, entitas, jenis dan masa berlaku; draf lama dinonaktifkan dalam transaksi yang sama dan draf baru tetap membutuhkan konfirmasi. Setelah eksekusi/batal/kedaluwarsa, tugas ditandai selesai pada pembacaan berikutnya, bukan dianggap sebagai izin pencatatan lanjutan. Memori tetap berlaku satu jam dan berakhir bersama penugasan.
-
-Widget memakai tema indigo yang berbeda dari dashboard, sapaan singkat dengan efek mengetik, dan panel pengaturan/bantuan yang tertutup pada awal. Animasi menghormati prefers-reduced-motion; mobile tetap layar penuh.
-
-Widget menampilkan cadangan biaya bersama, jumlah panggilan/status, sisa panggilan, alasan kuota habis dan reset pukul 00.00 WIB. Satu laporan dengan penjelasan bisa memakai dua panggilan. Mode Internal dapat dipilih tanpa memakai AI.
+CI menjalankan kontrak provider Sol/Sonnet dengan respons simulasi dan integrasi PostgreSQL untuk loop laporan, koreksi periode, klarifikasi singkat, draf/revisi/konfirmasi, otorisasi, pencabutan akses, deduplikasi dan kegagalan setelah pembacaan. Tes simulasi tidak membuktikan kesehatan API key atau deployment produksi; verifikasi langsung membutuhkan akses deployment tersebut.

@@ -21,6 +21,38 @@ crud_context = fixture_source.context
 
 
 @pytest.mark.asyncio
+async def test_auto_ai_clarifies_before_internal_and_remembers_short_answers(crud_context, monkeypatch):
+    from unittest.mock import AsyncMock
+    from modules.siabumdes.application import riska_ai
+    session, admin, _, _, _, air, *_ = crud_context
+    monkeypatch.setattr(riska_ai, 'ready', lambda provider: True)
+    model = AsyncMock(side_effect=[
+        (riska_ai.Interpretation(action='clarify', command='', reply='Tentu, siapa nama mitranya?'), {'model': 'mock-sol'}),
+        (riska_ai.Interpretation(action='clarify', command='', reply='Baik, SURYAMAN. Berapa modalnya?'), {'model': 'mock-sol'}),
+        (riska_ai.Interpretation(action='command', command='tambah mitra {"name":"SURYAMAN","capital":"5 jt","entitas":"UU04"}', reply='Baik'), {'model': 'mock-sol'}),
+    ])
+    monkeypatch.setattr(riska_ai, 'interpret', model)
+    first = await chat(ChatIn(message='tambah mitra', ai_mode='auto', unit_usaha_id=air.id), admin, session)
+    assert not first.get('conversation_id') and not first.get('draft_id')
+    second = await chat(ChatIn(message='SURYAMAN', ai_mode='auto', unit_usaha_id=air.id, ai_conversation_id=first['ai_conversation_id']), admin, session)
+    assert not second.get('conversation_id') and not second.get('draft_id')
+    final = await chat(ChatIn(message='5 jt', ai_mode='auto', unit_usaha_id=air.id, ai_conversation_id=second['ai_conversation_id']), admin, session)
+    assert final.get('draft_id'), final
+    assert model.call_args.args[3]['permintaan_belum_selesai'] == ['tambah mitra', 'SURYAMAN']
+    assert not await session.scalar(select(YieldPartner).where(YieldPartner.name == 'SURYAMAN'))
+
+
+@pytest.mark.asyncio
+async def test_auto_does_not_silently_fall_back_when_ai_unavailable(crud_context, monkeypatch):
+    from modules.siabumdes.application import riska_ai
+    session, admin, *_ = crud_context
+    monkeypatch.setattr(riska_ai, 'ready', lambda provider: False)
+    with pytest.raises(HTTPException) as error:
+        await chat(ChatIn(message='tambah mitra', ai_mode='auto'), admin, session)
+    assert error.value.status_code == 503
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('command', ['tambah mitra SURYAMAN 5 jt', 'tambah mitra SURYAMAN modal 5jt'])
 async def test_partner_name_and_capital_in_one_sentence(crud_context, command):
     session, admin, _, _, _, air, *_ = crud_context
@@ -379,7 +411,7 @@ async def test_ai_followup_has_official_report_and_owned_history(crud_context, m
     from modules.siabumdes.application import riska_ai
     session, admin, _, other, toko, *_ = crud_context
     monkeypatch.setattr(riska_ai, 'ready', lambda provider: True)
-    mocked = AsyncMock(return_value=(riska_ai.Interpretation(action='explain', command='', reply='Berikut penjelasan laporan Anda.'), {'model': 'mock-sol'}))
+    mocked = AsyncMock(side_effect=[(riska_ai.Interpretation(action='command', command='laba rugi tahun ini', reply='Baik'), {'model': 'mock-sol'}), (riska_ai.Interpretation(action='explain', command='', reply='Berikut penjelasan laporan Anda.'), {'model': 'mock-sol'}), (riska_ai.Interpretation(action='explain', command='', reply='Berikut penjelasan laporan Anda.'), {'model': 'mock-sol'})])
     monkeypatch.setattr(riska_ai, 'interpret', mocked)
     first = await chat(ChatIn(message='jelaskan laba rugi tahun ini', unit_usaha_id=toko.id, ai_mode='sol'), admin, session)
     assert first.get('rows') and first.get('ai_conversation_id')

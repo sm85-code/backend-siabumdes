@@ -27,7 +27,7 @@ class ChatIn(BaseModel):
     unit_usaha_id: str | None = None
     conversation_id: str | None = None
     session_id: str | None = None
-    ai_mode: Literal['auto', 'internal', 'sol', 'sonnet'] = 'auto'
+    ai_mode: Literal['auto', 'internal', 'sol', 'sonnet'] = 'internal'
     ai_conversation_id: str | None = Field(default=None, max_length=64)
 
 
@@ -113,10 +113,12 @@ async def chat(body: ChatIn, user: User = Depends(READ), session: AsyncSession =
     if history:
         await validate_draft_session(session, user, history)
     from modules.siabumdes.application import riska_ai
-    from .riska_crud import parse_command
+    from .riska_crud import FIELDS as CRUD_FIELDS, NAMES, parse_command
     from modules.siabumdes.application.riska_language import intent
     provider = body.ai_mode if body.ai_mode in {'sol', 'sonnet'} else 'sol' if riska_ai.ready('sol') else 'sonnet'
     context = {'laporan': history.payload.get('report') if history else None, 'percakapan': history.payload.get('messages', []) if history else []}
+    context['permintaan_belum_selesai'] = history.payload.get('pending_request', []) if history else []
+    context['field_wajib_data_baru'] = {resource: {field: NAMES.get(field, field) for field in fields} for resource, fields in CRUD_FIELDS.items()}
     available_units = select(UnitUsaha).where(UnitUsaha.active.is_(True)).order_by(UnitUsaha.code).limit(100)
     if is_pengelola(user):
         available_units = available_units.where(UnitUsaha.id == user.unit_usaha_id)
@@ -125,13 +127,11 @@ async def chat(body: ChatIn, user: User = Depends(READ), session: AsyncSession =
     if scope_id and (not selected_entity or not selected_entity.active):
         raise HTTPException(403, 'Entitas yang dipilih tidak aktif atau tidak tersedia.')
     context['entitas_terpilih'] = {'code': selected_entity.code, 'name': selected_entity.name} if selected_entity else {'code': 'BUMDES', 'name': 'BUMDES Pusat'}
-    complex_answer = False
     if body.conversation_id:
         filling = await session.scalar(select(RiskaDraft).where(RiskaDraft.id == body.conversation_id, RiskaDraft.user_id == user.id).with_for_update())
         if filling and not expired(filling) and filling.payload.get('kind') == 'crud_dialogue':
             await validate_draft_session(session, user, filling)
             context['pengisian'] = {key: filling.payload.get(key) for key in ('resource', 'action', 'expecting', 'data')}
-            complex_answer = bool(re.search(r'\b(?:sebenarnya|maksud|jadi|koreksi)\b', body.message, re.I) or len(body.message) > 40)
     if re.search(r'\b(?:transaksi|akun|coa)\b', body.message, re.I) and not body.conversation_id:
         from modules.siabumdes.infrastructure.models import Account, TransactionType
         from .riska_dialogue import resolve_units
@@ -156,13 +156,15 @@ async def chat(body: ChatIn, user: User = Depends(READ), session: AsyncSession =
 
     async def dispatch(interpretation):
         if interpretation.action != 'command':
-            if intent(body.message) in {'cash', 'profit'} and not body.conversation_id:
-                return await handle_chat(body, user, session, request)
             return {'message': interpretation.reply or 'Boleh ceritakan bagian pekerjaan yang ingin saya bantu?', **({'conversation_id': body.conversation_id} if body.conversation_id else {})}
         command = parse_command(interpretation.command)
         action = intent(interpretation.command)
         write = command and command[1] != 'read' or action in {'masuk', 'keluar', 'rusak', 'imbal', 'close', 'lock', 'transfer'} or re.search(r'\b(?:aktifkan|nonaktifkan)\b', interpretation.command, re.I)
         requested_write = re.search(r'\b(?:tambah|tambahin|buat|bikinkan|bikinin|input|catat|masukkan|masukin|ubah|edit|koreksi|hapus|hapuskan|buang|aktifkan|nonaktifkan|tutup|kunci|transfer|bekukan|setor|bayar|beli|jual|rusak)\b', body.message, re.I)
+        if context['permintaan_belum_selesai']:
+            requested_write = requested_write or re.search(r'\b(?:tambah|buat|input|catat|ubah|edit|koreksi|hapus|aktifkan|nonaktifkan|tutup|kunci|transfer|bayar|beli|jual)\b', context['permintaan_belum_selesai'][0], re.I)
+        if context.get('pengisian', {}).get('action') in {'create', 'update', 'delete'}:
+            requested_write = True
         if write and (not requested_write or re.search(r'\b(?:jangan|bukan|tidak|batalkan)\b', body.message, re.I)):
             return {'message': 'Saya bisa membantu memeriksa datanya terlebih dahulu. Jika Anda ingin mengubah data, mohon sebutkan tindakan yang diinginkan; perubahan tetap menunggu konfirmasi Anda.'}
         if body.conversation_id and context.get('pengisian') and not write:
@@ -171,17 +173,14 @@ async def chat(body: ChatIn, user: User = Depends(READ), session: AsyncSession =
             return {'message': interpretation.reply or 'Boleh jelaskan data atau tindakan yang Anda maksud? Saya bantu langkah demi langkah.'}
         return await handle_chat(body.model_copy(update={'message': interpretation.command, 'ai_mode': 'internal'}), user, session, request)
 
-    # Explicit model mode understands the whole request before internal dispatch.
-    rich_instruction = not body.conversation_id and len(body.message) > 40 and re.search(r'\b(?:input|tambah|catat|buat|ubah|edit|hapus|masukin|masukkan)\b', body.message, re.I)
-    language_needed = body.ai_mode in {'sol', 'sonnet'} and not body.conversation_id or complex_answer or rich_instruction
-    if body.ai_mode != 'internal' and language_needed and intent(body.message) != 'cancel' and riska_ai.ready(provider):
+    # AI owns language understanding; internal owns validation and execution.
+    if body.ai_mode != 'internal':
+        if not riska_ai.ready(provider):
+            raise HTTPException(503, 'Bantuan AI belum tersedia. Permintaan belum diteruskan ke sistem internal. Silakan coba kembali atau pilih mode Internal secara sengaja.')
         interpretation, usage = await ask(context)
         result = await dispatch(interpretation)
     else:
         result = await handle_chat(body, user, session, request)
-        if result.get('unrecognized') and not result.get('conversation_id') and body.ai_mode != 'internal' and riska_ai.ready(provider):
-            interpretation, usage = await ask(context)
-            result = await dispatch(interpretation)
     source_report = None
     if result.get('rows') is not None:
         source_report = {'rows': result['rows'][:20], 'money_columns': result.get('money_columns', []), 'periode_dan_cakupan': result['message'], 'jumlah_baris': len(result['rows'])}
@@ -198,8 +197,12 @@ async def chat(body: ChatIn, user: User = Depends(READ), session: AsyncSession =
         result['ai'] = usage
         messages = context['percakapan'] + [{'user': body.message, 'riska': result['message'][:1200]}]
         payload = {'kind': 'ai_history', 'messages': messages[-3:], 'report': source_report or context['laporan'], 'auth_session_version': user.session_version}
+        if interpretation.action == 'clarify':
+            pending = context['permintaan_belum_selesai'] + [body.message]
+            payload['pending_request'] = pending[:1] + pending[-7:] if len(pending) > 8 else pending
         if re.search(r'password|kata sandi|api[_ ]key', body.message, re.I):
             payload['messages'] = context['percakapan']
+            payload.pop('pending_request', None)
         if history:
             from modules.siabumdes.application.riska_sessions import bind_payload
             history.payload = await bind_payload(session, user, payload)

@@ -21,6 +21,30 @@ crud_context = fixture_source.context
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('command', ['tambah mitra SURYAMAN 5 jt', 'tambah mitra SURYAMAN modal 5jt'])
+async def test_partner_name_and_capital_in_one_sentence(crud_context, command):
+    session, admin, _, _, _, air, *_ = crud_context
+    reply = await talk(session, admin, command, unit=air)
+    assert reply.get('draft_id'), reply
+    draft = await session.get(RiskaDraft, reply['draft_id'])
+    assert draft.payload['data']['name'] == 'SURYAMAN'
+    assert Decimal(draft.payload['data']['capital']) == Decimal('5000000')
+    assert not await session.scalar(select(YieldPartner).where(YieldPartner.name == 'SURYAMAN'))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('answer', ['itu, SURYAMAN, 5 jt', 'nama mitra SURYAMAN, modal 5 jt'])
+async def test_partner_correction_updates_name_and_capital_together(crud_context, answer):
+    session, admin, _, _, _, air, *_ = crud_context
+    reply = await talk(session, admin, 'tambah mitra', ['Nama Salah'], air)
+    reply = await chat(ChatIn(message=answer, conversation_id=reply['conversation_id'], unit_usaha_id=air.id), admin, session)
+    assert reply.get('draft_id'), reply
+    draft = await session.get(RiskaDraft, reply['draft_id'])
+    assert draft.payload['data']['name'] == 'SURYAMAN'
+    assert Decimal(draft.payload['data']['capital']) == Decimal('5000000')
+
+
+@pytest.mark.asyncio
 async def test_short_date_followup_remembers_day_month_and_entity(crud_context):
     session, admin, *_ = crud_context
     reply = await talk(session, admin, 'tambah transaksi', ['pusat', '1okt'])

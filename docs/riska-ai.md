@@ -1,8 +1,8 @@
 # Riska internal, Sol, dan Sonnet
 
-Perintah yang dikenali parser SIABUMDES tetap menggunakan kode internal, tanpa token model. Mode Otomatis memanggil Sol (atau Sonnet jika hanya key Anthropic tersedia) ketika maksud belum dikenali. Permintaan analisis/ringkasan laporan yang dikenali juga dapat memakai model; angka dan tabel tetap berasal dari ReportingService.
+Mode Otomatis, Sol, dan Sonnet memahami setiap pesan melalui AI terlebih dahulu, termasuk jawaban pendek dan lanjutan pengisian. Jika maksud atau field wajib belum jelas, AI menanyakan bagian yang kurang dengan konteks sebelumnya. Permintaan yang sudah jelas baru diteruskan ke kode internal untuk validasi, laporan resmi, dan draf. Tidak ada fallback diam-diam ke parser bila provider tidak tersedia atau kuota habis.
 
-Widget menyediakan Internal / Otomatis / Sol / Sonnet. Memilih Sol/Sonnet menambahkan penjelasan pada laporan resmi; perintah CRUD yang sudah dikenali tetap melalui alur internal. AI hanya menghasilkan interpretasi bahasa atau penjelasan, tidak punya SQL, shell, endpoint arbitrer, maupun akses langsung mengeksekusi transaksi. Interpretasi ditampilkan kepada pengguna; seluruh perubahan tetap menghasilkan draf yang harus dikonfirmasi dengan tombol. Jawaban teks bukan otorisasi eksekusi.
+Widget mengirim mode Otomatis secara eksplisit. Pemanggilan API tanpa ai_mode tetap memakai Internal untuk klien internal; mode Internal merupakan pilihan eksplisit tanpa token dan memakai parser yang ada. AI tidak punya SQL, shell, endpoint arbitrer, atau izin eksekusi langsung. Seluruh perubahan tetap menunggu tombol konfirmasi draf. Jawaban teks bukan otorisasi eksekusi.
 
 Konfigurasi backend (key hanya di environment terenkripsi):
 - `OPENAI_API_KEY`, `OPENAI_MODEL` (default `gpt-6.1-sol`; juga mendukung `gpt-6-luna`).
@@ -20,9 +20,9 @@ Verifikasi memakai PostgreSQL lokal terisolasi dan respons provider tiruan. Kone
 
 ## Konteks percakapan dan laporan tahunan
 
-Mode Sol/Sonnet memahami instruksi lengkap sebelum dispatch ke workflow resmi; hasil pembacaan dikembalikan untuk penjelasan. Mode Internal tetap tanpa model. Rincian transaksi yang sudah diberikan dapat diterjemahkan menjadi field typed dan divalidasi terhadap jenis transaksi/COA terdaftar, tanpa meminta ulang seluruh instruksi. Field yang benar-benar belum tersedia tetap ditanyakan.
+Mode Otomatis/Sol/Sonnet memahami instruksi lengkap sebelum dispatch ke workflow resmi; hasil pembacaan dikembalikan untuk penjelasan. Mode Internal tetap tanpa model. Rincian transaksi yang sudah diberikan dapat diterjemahkan menjadi field typed dan divalidasi terhadap jenis transaksi/COA terdaftar, tanpa meminta ulang seluruh instruksi. Field yang benar-benar belum tersedia tetap ditanyakan.
 
-Memori kerja memakai record `ai_history` per pengguna dan entitas, terikat role, versi sesi login dan sesi penugasan. Menyimpan paling banyak tiga pertukaran terakhir serta snapshot laporan resmi, berlaku satu jam sejak aktivitas. Snapshot bukan pembacaan live baru; pertanyaan data terbaru harus membaca ulang workflow. Berakhirnya penugasan membatalkan memori beserta draf. Pergantian entitas menghapus konteks widget; percakapan milik pengguna lain ditolak. Konteks model menerima tanggal Jakarta, daftar unit aktif, serta jenis transaksi/COA scoped bila dibutuhkan. Riwayat lama dikurangi jika melewati batas input; angka laporan tetap berasal dari service.
+Memori kerja memakai record `ai_history` per pengguna dan entitas, terikat role, versi sesi login dan sesi penugasan. Menyimpan paling banyak tiga pertukaran terakhir, hingga delapan pesan untuk permintaan yang sedang diklarifikasi, serta snapshot laporan resmi, berlaku satu jam sejak aktivitas. Snapshot bukan pembacaan live baru; pertanyaan data terbaru harus membaca ulang workflow. Berakhirnya penugasan membatalkan memori beserta draf. Pergantian entitas menghapus konteks widget; percakapan milik pengguna lain ditolak. Konteks model menerima tanggal Jakarta, daftar unit aktif, serta jenis transaksi/COA scoped bila dibutuhkan. Riwayat lama dikurangi jika melewati batas input; angka laporan tetap berasal dari service.
 
 `tahun ini` berarti 1 Januari sampai hari ini; `tahun lalu` adalah tahun kalender sebelumnya; `tahun 2026` memakai tahun tersebut, sampai hari ini bila masih tahun berjalan. Klarifikasi periode memiliki conversation_id sehingga jawaban singkat melanjutkan laporan sebelumnya. `unit 1` dikenali dari kode aktif UU01, tanpa hardcode nama seed.
 

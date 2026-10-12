@@ -47,7 +47,7 @@ async def availability(user: User = Depends(READ), session: AsyncSession = Depen
         assignment = await current_assignment(session, user)
         from modules.siabumdes.application import riska_ai
         models = {provider: {'available': riska_ai.ready(provider), 'model': riska_ai.os.getenv(settings[1], settings[2])} for provider, settings in riska_ai.MODELS.items()}
-        return {"enabled": True, "session_id": assignment.session_id if assignment else None, 'ai_models': models}
+        return {"enabled": True, "session_id": assignment.session_id if assignment else None, 'ai_models': models, 'ai_budget': await riska_ai.budget_status(session)}
     except HTTPException:
         return {"enabled": False, "session_id": None}
 

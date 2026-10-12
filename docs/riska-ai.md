@@ -8,9 +8,9 @@ Konfigurasi backend (key hanya di environment terenkripsi):
 - `OPENAI_API_KEY`, `OPENAI_MODEL` (default `gpt-6.1-sol`; juga mendukung `gpt-6-luna`).
 - `ANTHROPIC_API_KEY`, `RISKA_SONNET_MODEL` (default `claude-sonnet-5-5`; juga mendukung `claude-sonnet-4-6`).
 - `RISKA_AI_ENABLED` default true; false mematikan bantuan model, tidak mematikan Riska internal.
-- `RISKA_AI_DAILY_USD` default 0.50, `RISKA_AI_DAILY_CALLS` default 20. Batas berlaku bersama untuk SIABUMDES, terpisah dari ERP.
+- `RISKA_AI_DAILY_USD` default 1.20, `RISKA_AI_DAILY_CALLS` default 20. Batas berlaku bersama untuk SIABUMDES, terpisah dari ERP.
 
-Setiap panggilan mencadangkan USD 0.06 secara atomik sebelum request; cadangan tidak dikembalikan, termasuk kegagalan. Dengan default USD 0.50, paling banyak 8 panggilan sehari. Ini batas konservatif, bukan tagihan aktual. Input dibatasi 12 KB dan output 1200 token; timeout 35 detik, tidak ada retry model otomatis. `riska_ai_budget` dan `riska_ai_calls` menyimpan cadangan, model, status dan jumlah token, tanpa prompt maupun API key. Startup initializer/Alembic 18 membuat tabel tambahan tanpa mengubah jurnal.
+Setiap panggilan mencadangkan USD 0.06 secara atomik sebelum request; cadangan tidak dikembalikan, termasuk kegagalan. Dengan default USD 1.20, paling banyak 20 panggilan sehari. Ini batas konservatif, bukan tagihan aktual. Untuk deployment yang memiliki override lama, tetapkan `RISKA_AI_DAILY_CALLS=20` dan `RISKA_AI_DAILY_USD=1.20`. Input dibatasi 12 KB dan output 1200 token; timeout 35 detik, tidak ada retry model otomatis. `riska_ai_budget` dan `riska_ai_calls` menyimpan cadangan, model, status dan jumlah token, tanpa prompt maupun API key. Startup initializer/Alembic 18 membuat tabel tambahan tanpa mengubah jurnal.
 
 Hak akses/role/sesi penugasan diperiksa lagi setelah respons model. Pengelola tetap terikat unit aktifnya dan tidak meminjam akses Admin. Setelah sesi selesai, penugasan berhenti seperti sebelumnya. Sapaan penerima penugasan menjelaskan bahwa Riska didesain Pa Saepul untuk membantu pekerjaan sesuai role. Admin tetap disapa Anda, tanpa Kak/nama.
 
@@ -35,3 +35,5 @@ Selain riwayat singkat, Riska menyimpan resource, rincian yang sudah disebut, fi
 Draf AI yang mendukung revisi mengembalikan can_revise. Pengguna boleh menjawab “modalnya jadi 6 juta” dengan revision_draft_id miliknya. Backend memeriksa pemilik, sesi, entitas, jenis dan masa berlaku; draf lama dinonaktifkan dalam transaksi yang sama dan draf baru tetap membutuhkan konfirmasi. Setelah eksekusi/batal/kedaluwarsa, tugas ditandai selesai pada pembacaan berikutnya, bukan dianggap sebagai izin pencatatan lanjutan. Memori tetap berlaku satu jam dan berakhir bersama penugasan.
 
 Widget memakai tema indigo yang berbeda dari dashboard, sapaan singkat dengan efek mengetik, dan panel pengaturan/bantuan yang tertutup pada awal. Animasi menghormati prefers-reduced-motion; mobile tetap layar penuh.
+
+Widget menampilkan cadangan biaya bersama, jumlah panggilan/status, sisa panggilan, alasan kuota habis dan reset pukul 00.00 WIB. Satu laporan dengan penjelasan bisa memakai dua panggilan. Mode Internal dapat dipilih tanpa memakai AI.

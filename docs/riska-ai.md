@@ -10,7 +10,7 @@ Konfigurasi backend (key hanya di environment terenkripsi):
 - `RISKA_AI_ENABLED` default true; false mematikan bantuan model, tidak mematikan Riska internal.
 - `RISKA_AI_DAILY_USD` default 0.50, `RISKA_AI_DAILY_CALLS` default 20. Batas berlaku bersama untuk SIABUMDES, terpisah dari ERP.
 
-Setiap panggilan mencadangkan USD 0.06 secara atomik sebelum request; cadangan tidak dikembalikan, termasuk kegagalan. Dengan default USD 0.50, paling banyak 8 panggilan sehari. Ini batas konservatif, bukan tagihan aktual. Input dibatasi 12 KB dan output 900 token; timeout 35 detik, tidak ada retry model otomatis. `riska_ai_budget` dan `riska_ai_calls` menyimpan cadangan, model, status dan jumlah token, tanpa prompt maupun API key. Startup initializer/Alembic 18 membuat tabel tambahan tanpa mengubah jurnal.
+Setiap panggilan mencadangkan USD 0.06 secara atomik sebelum request; cadangan tidak dikembalikan, termasuk kegagalan. Dengan default USD 0.50, paling banyak 8 panggilan sehari. Ini batas konservatif, bukan tagihan aktual. Input dibatasi 12 KB dan output 1200 token; timeout 35 detik, tidak ada retry model otomatis. `riska_ai_budget` dan `riska_ai_calls` menyimpan cadangan, model, status dan jumlah token, tanpa prompt maupun API key. Startup initializer/Alembic 18 membuat tabel tambahan tanpa mengubah jurnal.
 
 Hak akses/role/sesi penugasan diperiksa lagi setelah respons model. Pengelola tetap terikat unit aktifnya dan tidak meminjam akses Admin. Setelah sesi selesai, penugasan berhenti seperti sebelumnya. Sapaan penerima penugasan menjelaskan bahwa Riska didesain Pa Saepul untuk membantu pekerjaan sesuai role. Admin tetap disapa Anda, tanpa Kak/nama.
 
@@ -27,3 +27,11 @@ Memori kerja memakai record `ai_history` per pengguna dan entitas, terikat role,
 `tahun ini` berarti 1 Januari sampai hari ini; `tahun lalu` adalah tahun kalender sebelumnya; `tahun 2026` memakai tahun tersebut, sampai hari ini bila masih tahun berjalan. Klarifikasi periode memiliki conversation_id sehingga jawaban singkat melanjutkan laporan sebelumnya. `unit 1` dikenali dari kode aktif UU01, tanpa hardcode nama seed.
 
 Perbandingan laba rugi menyertakan margin, rasio HPP+beban, tiga akun HPP/beban terbesar dan porsi omzet terhadap total unit yang ditampilkan. Semua indikator dihitung kode dengan Decimal. Pusat tidak masuk denominator kontribusi omzet unit. Komponen biaya bukan bukti penyebab operasional; analisis tidak boleh mengarang penyebab atau menyebut ringkasan tanpa eliminasi sebagai konsolidasi resmi.
+
+## Percobaan memori tugas terstruktur
+
+Selain riwayat singkat, Riska menyimpan resource, rincian yang sudah disebut, field yang kurang, dan status tugas tambah mitra/transaksi pada memori milik pengguna/entitas yang sama. Model hanya mengusulkan rincian; backend membatasi field dan memvalidasi melalui CRUD resmi. Belum memasang Hermes atau menjalankan shell/SQL dari model.
+
+Draf AI yang mendukung revisi mengembalikan can_revise. Pengguna boleh menjawab “modalnya jadi 6 juta” dengan revision_draft_id miliknya. Backend memeriksa pemilik, sesi, entitas, jenis dan masa berlaku; draf lama dinonaktifkan dalam transaksi yang sama dan draf baru tetap membutuhkan konfirmasi. Setelah eksekusi/batal/kedaluwarsa, tugas ditandai selesai pada pembacaan berikutnya, bukan dianggap sebagai izin pencatatan lanjutan. Memori tetap berlaku satu jam dan berakhir bersama penugasan.
+
+Widget memakai tema indigo yang berbeda dari dashboard, sapaan singkat dengan efek mengetik, dan panel pengaturan/bantuan yang tertutup pada awal. Animasi menghormati prefers-reduced-motion; mobile tetap layar penuh.

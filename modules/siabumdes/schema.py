@@ -50,6 +50,15 @@ _ADD_COLUMNS = [
     ("toko_entries", "transaction_id", "VARCHAR(64) REFERENCES transactions(id) ON DELETE RESTRICT"),
 ]
 
+# DDL lanjutan setelah _ADD_COLUMNS (idempoten, tanpa menghapus data).
+# Rollback input mingguan Manajemen Setoran (#37): kembalikan unik satu pembayaran
+# per mitra per bulan. Kolom yield_payments.week (DEFAULT 0) dibiarkan, tidak dipakai.
+_POST_DDL = [
+    ("DROP INDEX IF EXISTS uq_yield_payment_period_week", "drop index uq_yield_payment_period_week"),
+    ("CREATE UNIQUE INDEX IF NOT EXISTS uq_yield_payment_period ON yield_payments (partner_id, year, month)",
+     "restore unique uq_yield_payment_period"),
+]
+
 
 async def _safe_exec(conn, sql: str, label: str) -> bool:
     """Run one DDL/DML statement in its own SAVEPOINT.
@@ -119,6 +128,8 @@ async def ensure_schema() -> None:
                 f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {col_def}",
                 f"add column {table}.{column}",
             )
+        for sql, label in _POST_DDL:
+            await _safe_exec(conn, sql, label)
         if not business_type_existed:
             # unit_usaha.business_type baru ditambahkan dengan default 'jasa' di atas;
             # UU05/UU06 sudah dipakai sebagai unit dagang (HPP) sebelum kolom ini ada,

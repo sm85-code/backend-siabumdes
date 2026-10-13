@@ -48,17 +48,15 @@ _ADD_COLUMNS = [
     ("stock_cards", "movement_kind", "VARCHAR(16) NOT NULL DEFAULT 'sale'"),
     ("unit_usaha", "business_type", "VARCHAR(20) NOT NULL DEFAULT 'jasa'"),
     ("toko_entries", "transaction_id", "VARCHAR(64) REFERENCES transactions(id) ON DELETE RESTRICT"),
-    ("yield_payments", "week", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 # DDL lanjutan setelah _ADD_COLUMNS (idempoten, tanpa menghapus data).
-# Manajemen Setoran mingguan: unik per mitra/tahun/bulan/minggu, bukan lagi per bulan.
-# Baris lama mendapat week=0 dari DEFAULT sehingga tetap unik dan tetap tampil.
+# Rollback input mingguan Manajemen Setoran (#37): kembalikan unik satu pembayaran
+# per mitra per bulan. Kolom yield_payments.week (DEFAULT 0) dibiarkan, tidak dipakai.
 _POST_DDL = [
-    ("CREATE UNIQUE INDEX IF NOT EXISTS uq_yield_payment_period_week ON yield_payments (partner_id, year, month, week)",
-     "create index uq_yield_payment_period_week"),
-    ("ALTER TABLE yield_payments DROP CONSTRAINT IF EXISTS uq_yield_payment_period",
-     "drop constraint uq_yield_payment_period"),
+    ("DROP INDEX IF EXISTS uq_yield_payment_period_week", "drop index uq_yield_payment_period_week"),
+    ("CREATE UNIQUE INDEX IF NOT EXISTS uq_yield_payment_period ON yield_payments (partner_id, year, month)",
+     "restore unique uq_yield_payment_period"),
 ]
 
 

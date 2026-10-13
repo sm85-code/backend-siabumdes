@@ -16,7 +16,7 @@ from modules.siabumdes.infrastructure.models import UnitUsaha, YieldPartner, Yie
 from shared.config import public_role
 from shared.database import get_db
 
-from modules.siabumdes.application.yield_transactions import lock_partner, save_linked_payment, delete_linked_payment, effective_week
+from modules.siabumdes.application.yield_transactions import lock_partner, save_linked_payment, delete_linked_payment
 
 router = APIRouter(prefix="/api/imbal-hasil", tags=["imbal-hasil"])
 
@@ -71,39 +71,8 @@ async def list_partners(year: int | None = Query(None, ge=1900, le=9999), unit: 
         row["payment_dates"] = {}
     for payment in payments:
         if payment.partner_id in by_partner:
-            # Satu bulan bisa berisi beberapa isian mingguan -> rekap tahunan = jumlahnya.
-            row, key = by_partner[payment.partner_id], str(payment.month)
-            row["payments"][key] = str(Decimal(row["payments"].get(key, "0")) + payment.amount)
-            when = payment.transaction_date.isoformat() if payment.transaction_date else None
-            if when and (not row["payment_dates"].get(key) or when > row["payment_dates"][key]):
-                row["payment_dates"][key] = when
-            row["payment_dates"].setdefault(key, None)
-    return {"unit_active": unit.active, "items": items}
-
-
-@router.get("/setoran")
-async def list_weekly(period: str = Query(..., pattern=r"^\d{4}-(0[1-9]|1[0-2])$"),
-                      unit: UnitUsaha = Depends(require_yield_unit), session: AsyncSession = Depends(get_db)):
-    """Input mingguan: per mitra, isian Minggu ke-1..5 pada periode (data bulanan lama ikut tampil)."""
-    year, month = (int(x) for x in period.split("-"))
-    partners = (await session.execute(select(YieldPartner).where(YieldPartner.unit_usaha_id == unit.id)
-                                      .order_by(YieldPartner.created_at, YieldPartner.id))).scalars().all()
-    payments = (await session.execute(select(YieldPayment).join(YieldPartner).where(
-        YieldPartner.unit_usaha_id == unit.id, YieldPayment.year == year, YieldPayment.month == month)
-        .order_by(YieldPayment.week.desc()))).scalars().all()
-    items = []
-    for partner in partners:
-        weeks: dict[str, dict] = {}
-        for p in payments:
-            if p.partner_id != partner.id:
-                continue
-            key = str(effective_week(p))
-            if key in weeks:  # data lama bertabrakan dengan isian mingguan: tetap tampil, dijumlah
-                weeks[key]["amount"] = str(Decimal(weeks[key]["amount"]) + p.amount)
-                continue
-            weeks[key] = {"amount": str(p.amount), "transaction_date": p.transaction_date.isoformat() if p.transaction_date else None,
-                          "legacy": p.week == 0, "transaction_id": p.transaction_id}
-        items.append({**partner_out(partner), "weeks": weeks})
+            by_partner[payment.partner_id]["payments"][str(payment.month)] = str(payment.amount)
+            by_partner[payment.partner_id]["payment_dates"][str(payment.month)] = payment.transaction_date.isoformat() if payment.transaction_date else None
     return {"unit_active": unit.active, "items": items}
 
 
@@ -152,8 +121,6 @@ class PaymentIn(BaseModel):
     month: int = Field(ge=1, le=12)
     automatic: bool = False
     amount: Decimal | None = Field(default=None, ge=0, max_digits=18, decimal_places=2)
-    # 0 = pembayaran bulanan (pola lama/Riska); 1..5 = Minggu ke-N (input mingguan).
-    week: int = Field(default=0, ge=0, le=5)
 
 
 def payment_amount(body: PaymentIn, partner: YieldPartner) -> Decimal:
@@ -168,14 +135,12 @@ def payment_amount(body: PaymentIn, partner: YieldPartner) -> Decimal:
 async def save_payment(partner_id: str, body: PaymentIn, request: Request,
                        unit: UnitUsaha = Depends(require_yield_writer), session: AsyncSession = Depends(get_db),
                        actor: User = Depends(require_roles("admin", "direktur", "bendahara", "pengelola"))):
-    if body.week and (body.transaction_date.year, body.transaction_date.month) != (body.year, body.month):
-        raise HTTPException(422, "Tanggal transaksi harus berada dalam periode bulan yang dipilih.")
     partner = await lock_partner(session, partner_id, unit)
     amount = payment_amount(body, partner)
     payment = await save_linked_payment(session, actor, unit, partner, body, amount)
     await record_audit(session, actor=actor, action="save_yield_payment", entity="yield_partners", entity_id=partner.id,
-        detail=f"Pembayaran {body.year}-{body.month:02d}" + (f" minggu {body.week}" if body.week else "") + f": {amount}", ip=request.client.host if request.client else "")
-    return {"month": body.month, "year": body.year, "week": payment.week, "amount": str(amount), "transaction_id": payment.transaction_id}
+        detail=f"Pembayaran {body.year}-{body.month:02d}: {amount}", ip=request.client.host if request.client else "")
+    return {"month": body.month, "year": body.year, "amount": str(amount), "transaction_id": payment.transaction_id}
 
 
 @router.delete("/mitra/{partner_id}/pembayaran", status_code=204)

@@ -29,3 +29,17 @@ Batas yang mengikuti sistem:
 - Daftar dibatasi 100 baris dengan pemberitahuan; gunakan `cari produk Nama`/`cari transaksi Referensi` untuk mempersempit pencarian.
 
 Efek mengetik hanya pada tampilan pesan Riska: tidak memperlambat API atau mengeksekusi transaksi. Tombol **Tampilkan langsung** melewati animasi; pengaturan perangkat `prefers-reduced-motion` menampilkan respons langsung. Tabel dan tombol konfirmasi muncul setelah teks selesai.
+
+## Manajemen Toko (UU05) dan Manajemen Setoran
+
+- `toko` = baris tab **Data** Manajemen Toko (nama, jenis pemasukan/pengeluaran, keterangan). Tambah/ubah/hapus
+  memanggil `toko_router.create_item/update_item/delete_item`; baris yang sudah memiliki nominal tidak dapat dihapus,
+  ganti nama/jenis menyinkronkan transaksi UU05 terkait.
+- `isian` = nominal **Minggu ke-N** tab Transaksi (`item_id`, `period` YYYY-MM, `week` 1–5, `tanggal`, `nominal`).
+  Simpan/hapus memanggil `upsert_entry/delete_entry`: tanggal wajib di bulan periode (Riska menawarkan Sabtu minggu
+  tersebut sebagai default), nominal > 0, transaksi otomatis `TOKO:<id>`, cek periode tutup/kunci.
+- Akses sama dengan halaman: admin, direktur, bendahara, dan pengelola unit UU05 (`require_toko_user/require_toko_writer`).
+- `pembayaran` (Setoran): jawab nominal `otomatis` untuk **Nominal Otomatis (3%)**, atau isi nominal untuk
+  **Nominal Senduene**. Tanggal default tanggal 28 dan wajib di tahun setoran (juga ditegakkan di backend).
+- Izin Riska tetap per pengguna (RiskaAssignment) dan per unit; kemampuan baru mengikuti peran di atas tanpa
+  pengaturan tambahan.

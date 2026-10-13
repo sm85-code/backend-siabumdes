@@ -24,10 +24,15 @@ from modules.siabumdes.application.riska_sessions import bind_payload, validate_
 from modules.siabumdes.identity.infrastructure.models import RiskaDraft, User
 from modules.siabumdes.infrastructure.models import Account, JournalItem, Transaction, TransactionType, UnitUsaha, YieldPartner, YieldPayment
 from modules.siabumdes.inventory.infrastructure.models import Product, StockCategory, StockCard, StockAdjustment
-from . import auth_router as auth, master_data_router as master, transaction_router as tx, uu05_inventory_router as inventory, yield_router as yields
+from modules.siabumdes.toko.infrastructure.models import TokoEntry, TokoItem
+from . import auth_router as auth, master_data_router as master, toko_router as toko, transaction_router as tx, uu05_inventory_router as inventory, yield_router as yields
 
 MODELS = {'transaksi': Transaction, 'akun': Account, 'pengguna': User, 'unit': UnitUsaha,
-          'produk': Product, 'mitra': YieldPartner, 'pembayaran': YieldPayment}
+          'produk': Product, 'mitra': YieldPartner, 'pembayaran': YieldPayment,
+          'toko': TokoItem, 'isian': TokoEntry}
+# Manajemen Toko (UU05): 'toko' = baris tab Data, 'isian' = nominal Minggu ke-N tab Transaksi.
+TOKO = {'toko', 'isian'}
+TOKO_UNIT = 'UU05'
 ADMIN = {'akun', 'pengguna', 'unit'}
 LABELS = {'create': 'Tambah', 'update': 'Ubah', 'delete': 'Hapus', 'read': 'Lihat'}
 FIELDS = {
@@ -38,6 +43,8 @@ FIELDS = {
  'produk': ['sku', 'name', 'category_id', 'unit_of_measure', 'cost_price', 'sell_price'],
  'mitra': ['name', 'capital'],
  'pembayaran': ['partner_id', 'year', 'month', 'transaction_date', 'amount'],
+ 'toko': ['name', 'jenis', 'keterangan'],
+ 'isian': ['item_id', 'period', 'week', 'tanggal', 'nominal'],
 }
 UPDATES = {
  'transaksi': FIELDS['transaksi'] + ['reference'], 'akun': ['name', 'category', 'subcategory', 'normal_balance'],
@@ -45,10 +52,11 @@ UPDATES = {
  'unit': ['name', 'business_type', 'description', 'revenue_scheme', 'active'],
  'produk': ['name', 'category_id', 'unit_of_measure', 'cost_price', 'sell_price'],
  'mitra': ['name', 'capital'], 'pembayaran': ['amount', 'transaction_date'],
+ 'toko': ['name', 'jenis', 'keterangan'], 'isian': ['tanggal', 'nominal'],
 }
 NAMES = {
  'date': 'tanggal transaksi (hari ini / kemarin / 10 Oktober 2026)', 'transaction_date': 'tanggal transaksi (hari ini / kemarin / 10 Oktober 2026)',
- 'transaction_type': 'jenis transaksi yang terdaftar', 'description': 'keterangan', 'amount': 'nominal (misalnya 300 ribu)',
+ 'transaction_type': 'jenis transaksi yang terdaftar', 'description': 'keterangan', 'amount': 'nominal (misalnya 300 ribu, atau “otomatis” untuk Nominal Otomatis 3% pada pembayaran imbal hasil)',
  'debit_account_code': 'akun debit (nama akun atau kode)', 'credit_account_code': 'akun kredit (nama akun atau kode)',
  'code': 'kode', 'name': 'nama lengkap', 'category': 'kategori COA', 'subcategory': 'subkategori COA (atau kosong)',
  'normal_balance': 'saldo normal (debit / kredit)', 'username': 'username', 'email': 'email', 'role': 'role',
@@ -56,13 +64,16 @@ NAMES = {
  'unit_of_measure': 'satuan barang (misalnya pcs)', 'cost_price': 'harga modal per barang', 'sell_price': 'harga jual per barang',
  'capital': 'modal mitra', 'partner_id': 'nama mitra', 'year': 'tahun pembayaran', 'month': 'bulan pembayaran',
  'unit_usaha_id': 'unit penugasan (nama / kode)', 'active': 'status unit (aktif / nonaktif)',
+ 'jenis': 'jenis transaksi toko (pemasukan / pengeluaran)', 'keterangan': 'keterangan (atau kosong)',
+ 'item_id': 'nama transaksi toko (dari tab Data)', 'period': 'periode (mis. Oktober 2026)', 'week': 'minggu ke berapa (1-5)',
+ 'tanggal': 'tanggal transaksi (default Sabtu minggu tsb, harus di bulan periode)', 'nominal': 'nominal (misalnya 300 ribu)',
  'clone_coa': 'salin template COA sejenis (ya / tidak)', 'reference': 'referensi', 'revenue_scheme': 'skema pendapatan',
 }
 
 
 def parse_command(message):
     text = clean(message)
-    match = re.search(r'\b(tambah|buat|input|catat|ubah|edit|koreksi|hapus|lihat|daftar|cari|aktifkan|nonaktifkan)\s+(?:data\s+)?(transaksi(?: umum)?|akun|coa|pengguna|user|unit(?: usaha)?|produk|mitra|pembayaran(?: imbal hasil)?)\b', text, re.I)
+    match = re.search(r'\b(tambah|buat|input|catat|ubah|edit|koreksi|hapus|lihat|daftar|cari|aktifkan|nonaktifkan)\s+(?:data\s+)?(transaksi(?: umum)?|akun|coa|pengguna|user|unit(?: usaha)?|produk|mitra|pembayaran(?: imbal hasil)?|isian(?: toko)?|toko)\b', text, re.I)
     if not match:
         return None
     verb, resource = match.group(1).lower(), match.group(2).lower()
@@ -87,7 +98,7 @@ def authorize(user, resource, action):
     role = public_role(user.role)
     if role != 'admin' and (resource == 'pengguna' or resource in ADMIN and action != 'read'):
         raise HTTPException(403, 'Pengelolaan COA, pengguna, dan unit melalui Riska hanya untuk Admin Utama.')
-    if resource in {'produk', 'mitra', 'pembayaran'} and role not in WRITE_LEVEL:
+    if resource in {'produk', 'mitra', 'pembayaran'} | TOKO and role not in WRITE_LEVEL:
         raise HTTPException(403, 'Akses modul operasional tidak diizinkan untuk role Anda.')
     if action != 'read' and role not in WRITE_LEVEL:
         raise HTTPException(403, 'Role Anda hanya dapat membaca data.')
@@ -147,6 +158,8 @@ async def unit_for(session, user, value, active=True):
 
 
 async def target(session, resource, data, unit, lock=False):
+    if resource == 'isian':
+        return await session.scalar(select(TokoEntry).where(TokoEntry.item_id == data['item_id'], TokoEntry.period == data['period'], TokoEntry.week == int(data['week'])).with_for_update())
     if resource == 'pembayaran':
         return await session.scalar(select(YieldPayment).where(YieldPayment.partner_id == data['partner_id'], YieldPayment.year == int(data['year']), YieldPayment.month == int(data['month'])).with_for_update())
     conditions = []
@@ -176,7 +189,36 @@ def partner_details(message):
 
 async def field_value(session, resource, field, message, unit):
     text = clean(message).strip().strip('"')
-    if field in {'date', 'transaction_date'}:
+    if field == 'jenis':
+        if text.lower() not in {'pemasukan', 'pengeluaran'}:
+            raise ValueError('Pilih pemasukan atau pengeluaran.')
+        return text.lower()
+    if field == 'keterangan':
+        return '' if text.lower() == 'kosong' else text
+    if field == 'item_id':
+        return (await lookup(session, TokoItem, text, [])).id
+    if field == 'period':
+        match = re.fullmatch(r'(\d{4})-(\d{1,2})', text) or re.fullmatch(r'(\d{1,2})/(\d{4})', text)
+        if match:
+            year, month = (int(match[1]), int(match[2])) if len(match[1]) == 4 else (int(match[2]), int(match[1]))
+        else:
+            words = text.lower().split()
+            if len(words) != 2 or words[0] not in MONTHS or not words[1].isdigit():
+                raise ValueError('Periode belum jelas. Contoh: Oktober 2026 atau 2026-10.')
+            year, month = int(words[1]), MONTHS.index(words[0]) + 1
+        if not (2000 <= year <= 2099 and 1 <= month <= 12):
+            raise ValueError('Periode tidak valid.')
+        return f'{year}-{month:02d}'
+    if field == 'week':
+        digits = re.sub(r'^(?:minggu\s*(?:ke)?-?\s*)', '', text.lower()).strip()
+        if not digits.isdigit() or not 1 <= int(digits) <= 5:
+            raise ValueError('Minggu harus 1 sampai 5.')
+        return int(digits)
+    if field == 'nominal':
+        return amount(text)
+    if field == 'amount' and resource == 'pembayaran' and text.lower() in {'otomatis', '3%', 'nominal otomatis', 'nominal otomatis (3%)'}:
+        return 'otomatis'
+    if field in {'date', 'transaction_date', 'tanggal'}:
         value = transaction_date(text, datetime.now(ZoneInfo('Asia/Jakarta')).date())
         if not value:
             raise ValueError('Tanggal belum jelas. Boleh jawab hari ini, kemarin, atau tanggal lengkap.')
@@ -250,6 +292,15 @@ async def question(session, user, state, field, row=None, extra=''):
     else:
         prompt = 'Boleh saya tahu ' + NAMES.get(field, field) + '?'
     choices = [{'label': NAMES.get(key, key), 'message': key} for key in (FIELDS[resource] if field == 'repair_field' else UPDATES[resource])] if field in {'field', 'repair_field'} else []
+    if field == 'tanggal' and resource == 'isian' and state.get('data', {}).get('period') and state['data'].get('week'):
+        from modules.siabumdes.application.toko_transactions import default_week_date
+        suggested = default_week_date(state['data']['period'], int(state['data']['week']))
+        choices = [{'label': f'{suggested} (Sabtu minggu ini)', 'message': suggested}]
+    if field == 'transaction_date' and resource == 'pembayaran' and state.get('data', {}).get('year') and state['data'].get('month'):
+        suggested = f"{int(state['data']['year'])}-{int(state['data']['month']):02d}-28"
+        choices = [{'label': f'{suggested} (default tanggal 28)', 'message': suggested}]
+    if field == 'amount' and resource == 'pembayaran':
+        choices = [{'label': 'Nominal Otomatis (3%)', 'message': 'otomatis'}]
     if field == 'date_year':
         year = datetime.now(ZoneInfo('Asia/Jakarta')).year
         choices = [{'label': str(value), 'message': str(value)} for value in [year, year - 1]]
@@ -257,9 +308,13 @@ async def question(session, user, state, field, row=None, extra=''):
         units = list((await session.scalars(select(UnitUsaha).where(UnitUsaha.active.is_(True)).order_by(UnitUsaha.code))).all())
         if resource in {'mitra', 'pembayaran'}:
             units = [unit for unit in units if unit.code == 'UU04']
+        elif resource in TOKO:
+            units = [unit for unit in units if unit.code == TOKO_UNIT]
         elif resource == 'produk':
             units = [unit for unit in units if unit.business_type in {'perdagangan', 'manufaktur'}]
-        choices = ([] if resource in {'mitra', 'pembayaran', 'produk'} else [{'label': 'BUMDES Pusat', 'message': 'pusat'}]) + [{'label': unit.name, 'message': unit.code} for unit in units]
+        choices = ([] if resource in {'mitra', 'pembayaran', 'produk'} | TOKO else [{'label': 'BUMDES Pusat', 'message': 'pusat'}]) + [{'label': unit.name, 'message': unit.code} for unit in units]
+    if field == 'jenis':
+        choices = [{'label': 'Pemasukan', 'message': 'pemasukan'}, {'label': 'Pengeluaran', 'message': 'pengeluaran'}]
     if field in {'business_type', 'normal_balance', 'active', 'role'}:
         choices = [{'label': value, 'message': value} for value in ({'business_type': sorted(master.BUSINESS_TYPES), 'normal_balance': ['debit', 'kredit'], 'active': ['aktif', 'nonaktif'], 'role': sorted(PUBLIC_ROLES)}[field])]
     return {'conversation_id': row.id, 'choices': choices, 'message': f'Baik, saya bantu menyiapkan {subject}. {extra}{prompt} Jawab singkat saja; belum ada data yang disimpan.'}
@@ -273,6 +328,8 @@ def choose_field(resource, text):
                'satuan': 'unit_of_measure', 'modal': 'capital', 'akun debit': 'debit_account_code', 'akun kredit': 'credit_account_code',
                'jenis transaksi': 'transaction_type', 'referensi': 'reference', 'status': 'active', 'unit': 'unit_usaha_id',
                'deskripsi': 'description', 'skema pendapatan': 'revenue_scheme'}
+    if resource in TOKO:
+        aliases.update({'keterangan': 'keterangan', 'tanggal': 'tanggal', 'nominal': 'nominal', 'jenis': 'jenis', 'jenis transaksi': 'jenis', 'nama transaksi': 'name'})
     text = text.lower().strip()
     value = aliases.get(text, text)
     if value not in UPDATES[resource]:
@@ -306,6 +363,11 @@ async def validate(session, user, state, unit, existing):
             raise ValueError('Produk hanya untuk unit perdagangan/manufaktur.')
         if resource in {'mitra', 'pembayaran'} and unit.code != 'UU04':
             raise ValueError('Register imbal hasil hanya tersedia pada unit UU04.')
+    if resource in TOKO and (not unit or unit.code != TOKO_UNIT):
+        raise ValueError('Manajemen Toko hanya tersedia pada unit UU05.')
+    if resource in TOKO:
+        # Dependensi yang sama dengan halaman Manajemen Toko (peran, pengelola UU05, unit aktif).
+        await toko.require_toko_writer(await toko.require_toko_user(user, session), session)
     if action != 'read' and resource not in {'unit', 'pengguna'}:
         await assert_unit_active(session, unit.id if unit else None)
     if resource == 'transaksi':
@@ -358,6 +420,29 @@ async def validate(session, user, state, unit, existing):
             await lookup(session, StockCategory, data['category_id'], [])
     if resource == 'mitra' and action != 'delete':
         yields.PartnerIn(**data)
+    if resource == 'toko':
+        if action == 'delete':
+            if await session.scalar(select(TokoEntry.id).where(TokoEntry.item_id == existing.id).limit(1)):
+                raise ValueError('Data transaksi tidak dapat dihapus karena sudah memiliki nominal di tab Transaksi. Hapus seluruh isian nominalnya terlebih dahulu')
+        else:
+            (toko.ItemCreateBody if action == 'create' else toko.ItemUpdateBody)(**data)
+            if existing and await session.scalar(select(TokoEntry.id).where(TokoEntry.item_id == existing.id).limit(1)):
+                # Ganti nama/jenis menyinkronkan transaksi UU05 terkait -> cek periode semuanya.
+                for entry in (await session.scalars(select(TokoEntry).where(TokoEntry.item_id == existing.id))).all():
+                    await assert_can_mutate_period(session, user, entry.tanggal, unit.id)
+    if resource == 'isian':
+        if not await session.get(TokoItem, data['item_id']):
+            raise ValueError('Nama transaksi toko tidak ditemukan di tab Data.')
+        live = await target(session, resource, data, unit)
+        if action == 'create' and live:
+            raise HTTPException(409, 'Isian minggu tersebut sudah ada. Gunakan ubah isian.')
+        if action != 'delete':
+            model = toko.EntryUpsertBody(**data)
+            if model.tanggal.strftime('%Y-%m') != model.period:
+                raise ValueError('Tanggal transaksi harus berada dalam periode bulan yang dipilih.')
+            await assert_can_mutate_period(session, user, model.tanggal, unit.id)
+        if existing:
+            await assert_can_mutate_period(session, user, existing.tanggal, unit.id)
     if resource == 'pembayaran':
         partner = await session.get(YieldPartner, data['partner_id'])
         if not partner or partner.unit_usaha_id != unit.id:
@@ -365,7 +450,9 @@ async def validate(session, user, state, unit, existing):
         live = await target(session, resource, data, unit)
         if action == 'create' and live:
             raise HTTPException(409, 'Pembayaran sudah tercatat. Gunakan ubah pembayaran.')
-        yields.PaymentIn(**data)
+        payment = yields.PaymentIn(**data)
+        if action != 'delete' and payment.transaction_date.year != payment.year:
+            raise ValueError(f'Tanggal transaksi harus berada di tahun {payment.year}.')
         if existing and existing.transaction_date:
             await assert_can_mutate_period(session, user, existing.transaction_date, unit.id)
         await assert_can_mutate_period(session, user, date.fromisoformat(str(data['transaction_date'])), unit.id)
@@ -442,7 +529,7 @@ async def handle_crud(session, user, body, *, structured_state=None):
             chosen = await unit_for(session, user, entity) if entity else await session.get(UnitUsaha, user.unit_usaha_id if is_pengelola(user) else body.unit_usaha_id) if (user.unit_usaha_id if is_pengelola(user) else body.unit_usaha_id) else None
             state['unit_id'] = chosen.id if chosen else None
             state['entity_selected'] = True
-        patch = inline_patch(resource, tail, True) if action == 'update' and resource != 'pembayaran' else None
+        patch = inline_patch(resource, tail, True) if action == 'update' and resource not in {'pembayaran', 'isian'} else None
         if patch:
             tail, field, value = patch
             state['inline_patch'] = {'field': field, 'value': value}
@@ -473,7 +560,7 @@ async def handle_crud(session, user, body, *, structured_state=None):
             name = re.sub(r'^baru\s+', '', tail, flags=re.I).strip().strip('"')
             if name:
                 state['data']['name'] = name
-        if action != 'create' and resource != 'pembayaran' and tail:
+        if action != 'create' and resource not in {'pembayaran', 'isian'} and tail:
             state['data']['target'] = tail
         if is_pengelola(user):
             state['unit_id'] = user.unit_usaha_id
@@ -532,7 +619,7 @@ async def handle_crud(session, user, body, *, structured_state=None):
             data['name'] = re.sub(r'^nama\s+mitra\s*[,=:]?\s*', '', clean(body.message), flags=re.I).strip()
             return await question(session, user, state, 'capital', row, 'Nama mitra sudah saya perbaiki. ')
         elif expecting:
-            if expecting in {'date', 'transaction_date'}:
+            if expecting in {'date', 'transaction_date', 'tanggal'}:
                 partial = partial_transaction_date(body.message)
                 if partial:
                     state['partial_date'] = {**partial, 'field': expecting}
@@ -542,7 +629,7 @@ async def handle_crud(session, user, body, *, structured_state=None):
             state['value_supplied'] = True
         if resource not in {'unit', 'pengguna'} and not state.get('entity_selected') and not state.get('unit_id'):
             return await question(session, user, state, 'entity', row)
-        wrong_entity = resource in {'mitra', 'pembayaran'} and (not unit or unit.code != 'UU04') or resource == 'produk' and (not unit or unit.business_type not in {'perdagangan', 'manufaktur'})
+        wrong_entity = resource in {'mitra', 'pembayaran'} and (not unit or unit.code != 'UU04') or resource in TOKO and (not unit or unit.code != TOKO_UNIT) or resource == 'produk' and (not unit or unit.business_type not in {'perdagangan', 'manufaktur'})
         if wrong_entity:
             if is_pengelola(user):
                 raise HTTPException(403, 'Modul ini belum tersedia untuk unit Anda. Saya dapat membantu pekerjaan lain sesuai izin unit Anda.')
@@ -550,7 +637,7 @@ async def handle_crud(session, user, body, *, structured_state=None):
         supplied_fields = state.get('supplied', {})
         for field in list(supplied_fields):
             expecting = field
-            if field in {'date', 'transaction_date'}:
+            if field in {'date', 'transaction_date', 'tanggal'}:
                 partial = partial_transaction_date(str(supplied_fields[field]))
                 if partial:
                     state['partial_date'] = {**partial, 'field': field}
@@ -571,12 +658,15 @@ async def handle_crud(session, user, body, *, structured_state=None):
             model = MODELS[resource]
             if resource == 'pembayaran':
                 statement = select(YieldPayment).join(YieldPartner).where(YieldPartner.unit_usaha_id == (unit.id if unit else None))
+            elif resource in TOKO:
+                await toko.require_toko_user(user, session)
+                statement = select(model)  # Manajemen Toko hanya milik UU05 (dicek wrong_entity).
             else:
                 statement = select(model).where(Account.group_code == (unit.code if unit else 'BUMDES')) if resource == 'akun' else select(model).where(model.unit_usaha_id == (unit.id if unit else None))
         if action == 'read':
             if data.get('target'):
                 model = MODELS[resource]
-                columns = [getattr(model, key) for key in ['id', 'name', 'code', 'username', 'sku', 'description', 'reference'] if hasattr(model, key)]
+                columns = [getattr(model, key) for key in ['id', 'name', 'code', 'username', 'sku', 'description', 'reference', 'period'] if hasattr(model, key)]
                 if columns:
                     statement = statement.where(or_(*(column.icontains(data['target'], autoescape=True) for column in columns)))
             records = list((await session.scalars(statement.order_by(MODELS[resource].id).limit(101))).all())
@@ -586,15 +676,18 @@ async def handle_crud(session, user, body, *, structured_state=None):
             if resource == 'pembayaran' and records:
                 partners = {partner.id: partner.name for partner in (await session.scalars(select(YieldPartner).where(YieldPartner.id.in_([record.partner_id for record in records])))).all()}
                 output = [{'mitra': partners.get(record.partner_id, ''), **display(record)} for record in records[:100]]
-            return {'message': f'Berikut daftar {resource} sesuai akses Anda. ' + ('Ditampilkan maksimal 100 baris; persempit pencarian untuk data lain. ' if len(records) > 100 else '') + 'Ada hal lain yang bisa saya bantu? ✨', 'rows': output, 'money_columns': ['amount', 'capital', 'cost_price', 'sell_price']}
+            if resource == 'isian' and records:
+                items = {item.id: item for item in (await session.scalars(select(TokoItem).where(TokoItem.id.in_([record.item_id for record in records])))).all()}
+                output = [{'nama_transaksi': getattr(items.get(record.item_id), 'name', ''), 'jenis': getattr(items.get(record.item_id), 'jenis', ''), **display(record)} for record in records[:100]]
+            return {'message': f'Berikut daftar {resource} sesuai akses Anda. ' + ('Ditampilkan maksimal 100 baris; persempit pencarian untuk data lain. ' if len(records) > 100 else '') + 'Ada hal lain yang bisa saya bantu? ✨', 'rows': output, 'money_columns': ['amount', 'capital', 'cost_price', 'sell_price', 'nominal']}
         existing = None
-        if resource == 'pembayaran':
-            for key in ['partner_id', 'year', 'month']:
+        if resource in {'pembayaran', 'isian'}:
+            for key in (['partner_id', 'year', 'month'] if resource == 'pembayaran' else ['item_id', 'period', 'week']):
                 if key not in data:
                     return await question(session, user, state, key, row)
             existing = await target(session, resource, data, unit)
             if action != 'create' and not existing:
-                raise ValueError('Pembayaran pada bulan/tahun tersebut belum tercatat.')
+                raise ValueError('Data pada periode tersebut belum tercatat.')
             if action == 'create' and existing:
                 raise ValueError('Pembayaran sudah tercatat. Gunakan ubah pembayaran untuk mengoreksinya.')
         elif action != 'create':
@@ -611,7 +704,7 @@ async def handle_crud(session, user, body, *, structured_state=None):
                     if key not in data and getattr(existing, key, None) is not None:
                         data[key] = getattr(existing, key)
                 # Full official request models require original values for unchanged fields.
-                if resource in {'transaksi', 'akun', 'mitra'}:
+                if resource in {'transaksi', 'akun', 'mitra', 'isian'}:
                     for key in FIELDS[resource]:
                         data.setdefault(key, getattr(existing, key, ''))
                 state['loaded'] = True
@@ -645,7 +738,10 @@ async def handle_crud(session, user, body, *, structured_state=None):
             if template:
                 data['clone_from'] = template.code
         if resource == 'pembayaran':
-            data['automatic'] = bool(existing.automatic) if existing and action == 'update' and state.get('update_field') != 'amount' else False
+            if data.get('amount') == 'otomatis':
+                data['automatic'] = True  # Nominal Otomatis (3%) dari modal mitra saat ini
+            else:
+                data['automatic'] = bool(existing.automatic) if existing and action == 'update' and state.get('update_field') != 'amount' else False
             if data['automatic']:
                 partner = await session.get(YieldPartner, data['partner_id'])
                 data['amount'] = str(yields.payment_amount(yields.PaymentIn(**data), partner))
@@ -664,13 +760,17 @@ async def handle_crud(session, user, body, *, structured_state=None):
         await validate(session, user, state, unit, existing)
         # Convert date/Decimal model fields to JSON-safe canonical strings.
         state['data'] = json.loads(json.dumps(data, default=str))
-        preview_rows = [{'bagian': NAMES.get(k, k), 'sebelum': str(getattr(existing, k, '')) if existing else '', 'sesudah': str(v)} for k, v in state['data'].items() if k not in {'target', 'partner_id', 'unit_usaha_id'} and (action != 'update' or not existing or str(getattr(existing, k, '')) != str(v))]
+        preview_rows = [{'bagian': NAMES.get(k, k), 'sebelum': str(getattr(existing, k, '')) if existing else '', 'sesudah': str(v)} for k, v in state['data'].items() if k not in {'target', 'partner_id', 'unit_usaha_id', 'item_id'} and (action != 'update' or not existing or str(getattr(existing, k, '')) != str(v))]
         if action == 'delete':
             preview_rows = [{'bagian': k, 'sebelum': v, 'sesudah': 'nonaktif' if resource == 'unit' else 'dihapus'} for k, v in display(existing).items() if k not in {'created_at'}]
-        preview = {'unit': unit.name if unit else 'BUMDES Pusat', 'operation': 'Nonaktifkan unit' if resource == 'unit' and action == 'delete' else f'{LABELS[action]} {resource}', 'item': str(data.get('name', data.get('target', resource))), 'tanggal': str(data.get('date', data.get('transaction_date', '—'))), 'rows': preview_rows}
+        preview = {'unit': unit.name if unit else 'BUMDES Pusat', 'operation': 'Nonaktifkan unit' if resource == 'unit' and action == 'delete' else f'{LABELS[action]} {resource}', 'item': str(data.get('name', data.get('target', resource))), 'tanggal': str(data.get('date', data.get('transaction_date', data.get('tanggal', '—')))), 'rows': preview_rows}
         if resource == 'pembayaran':
             partner = await session.get(YieldPartner, data['partner_id'])
             preview['item'] = partner.name
+        if resource == 'isian':
+            item = await session.get(TokoItem, data['item_id'])
+            preview['item'] = f"{item.name} ({item.jenis}) - Minggu {data['week']} - {data['period']}"
+            preview['rows'].append({'bagian': 'Transaksi UU05', 'sebelum': '', 'sesudah': 'dihapus' if action == 'delete' else 'dibuat/diperbarui otomatis'})
         if resource == 'pengguna' and data.get('unit_usaha_id'):
             assigned = await session.get(UnitUsaha, data['unit_usaha_id'])
             preview['details'] = {'Unit penugasan': assigned.name if assigned else 'Tidak ditemukan'}
@@ -748,6 +848,12 @@ async def execute_crud(session, user, row, request):
             elif resource == 'pembayaran':
                 model = yields.PaymentIn(**data)
                 result = await yields.delete_payment(data['partner_id'], model, request, unit, session, user) if action == 'delete' else await yields.save_payment(data['partner_id'], model, request, unit, session, user)
+            elif resource in TOKO:
+                await toko.require_toko_writer(await toko.require_toko_user(user, session), session)
+            if resource == 'toko':
+                result = await toko.create_item(toko.ItemCreateBody(**data), user, session) if action == 'create' else await toko.update_item(existing.id, toko.ItemUpdateBody(**data), user, session) if action == 'update' else await toko.delete_item(existing.id, user, session)
+            elif resource == 'isian':
+                result = await toko.delete_entry(existing.id, user, session) if action == 'delete' else await toko.upsert_entry(toko.EntryUpsertBody(**data), user, session)
             row.consumed = True
             from modules.siabumdes.identity.application.services import record_audit
             await record_audit(session, actor=user, action='riska_crud_execute', entity='riska_drafts', entity_id=row.id, detail=f'{action} {resource}')

@@ -123,3 +123,16 @@ async def backfill_toko_transactions(session) -> int:
         await apply_entry_transaction(session, None, unit, entry, item, check_period=False)
     await session.flush()
     return len(rows)
+
+
+def default_week_date(period: str, week: int) -> str:
+    """Sama dengan UI: Sabtu minggu ke-N (minggu ke-1 = tgl 1 s.d. Sabtu pertama);
+    bila tidak ada, hari setelah Sabtu minggu ke-4 atau akhir bulan."""
+    import calendar
+    from datetime import date as _date
+    year, month = (int(x) for x in period.split("-"))
+    last = calendar.monthrange(year, month)[1]
+    first_saturday = 1 + (5 - _date(year, month, 1).weekday()) % 7
+    saturday = first_saturday + (week - 1) * 7
+    day = saturday if saturday <= last else min(first_saturday + 22, last)
+    return f"{period}-{day:02d}"

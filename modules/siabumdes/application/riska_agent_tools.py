@@ -60,9 +60,9 @@ class Report(Input):
 
 
 class Crud(Entity):
-    resource: Literal['transaksi', 'akun', 'pengguna', 'unit', 'produk', 'mitra', 'pembayaran']
+    resource: Literal['transaksi', 'akun', 'pengguna', 'unit', 'produk', 'mitra', 'pembayaran', 'toko', 'isian']
     action: Literal['read', 'create', 'update', 'delete']
-    target: str | None = Field(default=None, max_length=200, description='ID atau nama terdaftar; wajib untuk update/delete selain pembayaran.')
+    target: str | None = Field(default=None, max_length=200, description='ID atau nama terdaftar; wajib untuk update/delete selain pembayaran/isian. toko = baris tab Data Manajemen Toko (UU05); isian = nominal Minggu ke-N (item_id, period YYYY-MM, week 1-5, tanggal, nominal).')
     fields: dict[str, str | int | float | bool] = Field(default_factory=dict, max_length=20, description='Field resmi dari informasi eksplisit pengguna; tanyakan nilai yang belum diberikan sebelum membuat draf.')
 
 
@@ -170,6 +170,8 @@ async def execute(name, args, session, user, body, request=None, revision=None):
         allowed = set(crud.FIELDS[data.resource] if data.action == 'create' else crud.UPDATES[data.resource])
         if data.resource == 'pembayaran':
             allowed |= {'partner_id', 'year', 'month'}
+        if data.resource == 'isian':
+            allowed |= {'item_id', 'period', 'week'}
         if set(data.fields) - allowed:
             raise ValueError('Field tidak sesuai formulir resmi: ' + ', '.join(sorted(set(data.fields) - allowed)))
         if data.action == 'read' and data.fields:

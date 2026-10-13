@@ -195,10 +195,10 @@ async def upsert_entry(
     session: AsyncSession = Depends(get_db),
 ):
     _check_period(body.period)
-    if body.week == 5 and not week5_has_saturday(body.period) and body.tanggal.strftime("%Y-%m") != body.period:
+    if body.tanggal.strftime("%Y-%m") != body.period:
         raise HTTPException(
             status_code=422,
-            detail="Tanggal Minggu ke-5 harus berada dalam periode bulan yang dipilih.",
+            detail="Tanggal transaksi harus berada dalam periode bulan yang dipilih.",
         )
     if not await session.get(TokoItem, body.item_id):
         raise HTTPException(status_code=404, detail="Data transaksi tidak ditemukan")

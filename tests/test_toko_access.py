@@ -105,13 +105,15 @@ def test_week5_saturday_detection():
     assert not tr.week5_has_saturday('2026-02')  # Sabtu: 7,14,21,28
 
 
-@pytest.mark.parametrize('tanggal,status', [('2026-03-01', 422), ('2026-02-28', 404)])
-def test_week5_without_saturday_requires_date_in_month(tanggal, status):
+@pytest.mark.parametrize('week,tanggal,status', [
+    (5, '2026-03-01', 422), (5, '2026-02-28', 404), (1, '2026-01-31', 422), (2, '2026-02-03', 404),
+])
+def test_entry_date_must_be_in_period(week, tanggal, status):
     class S(_Session):
         async def get(self, model, key, **kwargs):
             return None
     app_client = _client('admin')
     app_client.app.dependency_overrides[get_db] = lambda: S()
-    body = {'item_id': 'zz', 'period': '2026-02', 'week': 5, 'tanggal': tanggal, 'nominal': '1000'}
+    body = {'item_id': 'zz', 'period': '2026-02', 'week': week, 'tanggal': tanggal, 'nominal': '1000'}
     # 404 = lolos validasi tanggal, lalu item tidak ditemukan
     assert app_client.put('/api/v1/toko/entries', json=body).status_code == status

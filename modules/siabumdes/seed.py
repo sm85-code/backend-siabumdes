@@ -90,6 +90,16 @@ async def seed_if_needed() -> None:
             await _seed_users(session, units)
             from modules.siabumdes.application.yield_transactions import ensure_yield_type
             await ensure_yield_type(session)
+            from modules.siabumdes.application.toko_transactions import backfill_toko_transactions, ensure_toko_types
+            await ensure_toko_types(session)
+            await session.flush()
+            try:
+                async with session.begin_nested():
+                    created = await backfill_toko_transactions(session)
+                if created:
+                    logger.info("backfill %s transaksi Manajemen Toko", created)
+            except Exception:
+                logger.exception("backfill transaksi Manajemen Toko dilewati")
             existing = await session.get(SystemControl, "default")
             if not existing:
                 session.add(SystemControl(id="default", recording_locked=False))

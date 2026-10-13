@@ -47,6 +47,7 @@ _ADD_COLUMNS = [
     ("users", "photo_url", "VARCHAR(500) NOT NULL DEFAULT ''"),
     ("stock_cards", "movement_kind", "VARCHAR(16) NOT NULL DEFAULT 'sale'"),
     ("unit_usaha", "business_type", "VARCHAR(20) NOT NULL DEFAULT 'jasa'"),
+    ("toko_entries", "transaction_id", "VARCHAR(64) REFERENCES transactions(id) ON DELETE RESTRICT"),
 ]
 
 

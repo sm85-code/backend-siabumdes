@@ -56,3 +56,45 @@ def test_other_role_denied():
 
 def test_bad_period_rejected():
     assert _client('admin').get('/api/v1/toko/entries', params={'period': '2026-13'}).status_code == 422
+
+
+class _DeleteSession:
+    def __init__(self, count):
+        self.count, self.deleted = count, False
+
+    async def get(self, model, key, **kwargs):
+        return SimpleNamespace(id=key, name='Penjualan')
+
+    async def scalar(self, stmt):
+        return self.count
+
+    async def delete(self, obj):
+        self.deleted = True
+
+    async def commit(self):
+        pass
+
+
+def _delete_client(session):
+    app = FastAPI()
+    app.include_router(tr.router)
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id='x', username='x', role='admin', unit_usaha_id=None)
+
+    async def _db():
+        yield session
+
+    app.dependency_overrides[get_db] = _db
+    return TestClient(app)
+
+
+def test_delete_item_with_entries_rejected():
+    s = _DeleteSession(2)
+    r = _delete_client(s).delete('/api/v1/toko/items/a')
+    assert r.status_code == 409 and 'tidak dapat dihapus' in r.json()['detail']
+    assert not s.deleted
+
+
+def test_delete_item_without_entries_allowed():
+    s = _DeleteSession(0)
+    assert _delete_client(s).delete('/api/v1/toko/items/a').status_code == 200
+    assert s.deleted

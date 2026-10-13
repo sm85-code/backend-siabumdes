@@ -30,7 +30,7 @@ def upgrade() -> None:
     op.create_table(
         "toko_entries",
         sa.Column("id", sa.String(64), primary_key=True),
-        sa.Column("item_id", sa.String(64), sa.ForeignKey("toko_items.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("item_id", sa.String(64), sa.ForeignKey("toko_items.id", ondelete="RESTRICT"), nullable=False),
         sa.Column("period", sa.String(7), nullable=False),
         sa.Column("week", sa.Integer(), nullable=False),
         sa.Column("tanggal", sa.Date(), nullable=False),

@@ -35,9 +35,8 @@ class TokoItem(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
-    entries: Mapped[list["TokoEntry"]] = relationship(
-        back_populates="item", cascade="all, delete-orphan", passive_deletes=True
-    )
+    # Tanpa cascade: item yang sudah punya isian tidak boleh dihapus (lihat toko_router).
+    entries: Mapped[list["TokoEntry"]] = relationship(back_populates="item", passive_deletes="all")
 
 
 class TokoEntry(Base):
@@ -48,7 +47,7 @@ class TokoEntry(Base):
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=_uuid)
     item_id: Mapped[str] = mapped_column(
-        String(64), ForeignKey("toko_items.id", ondelete="CASCADE"), nullable=False, index=True
+        String(64), ForeignKey("toko_items.id", ondelete="RESTRICT"), nullable=False, index=True
     )
     period: Mapped[str] = mapped_column(String(7), nullable=False, index=True)
     week: Mapped[int] = mapped_column(Integer, nullable=False)

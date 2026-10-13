@@ -49,8 +49,9 @@ def _check_period(period: str) -> str:
     return period
 
 
-def item_out(item: TokoItem) -> dict:
+def item_out(item: TokoItem, has_entries: bool = False) -> dict:
     return {
+        "has_entries": has_entries,
         "id": item.id,
         "name": item.name,
         "jenis": item.jenis,
@@ -97,8 +98,9 @@ async def list_items(
     _: User = Depends(require_toko_user),
     session: AsyncSession = Depends(get_db),
 ):
-    rows = (await session.execute(select(TokoItem).order_by(TokoItem.position, TokoItem.created_at))).scalars()
-    return [item_out(r) for r in rows]
+    rows = list((await session.execute(select(TokoItem).order_by(TokoItem.position, TokoItem.created_at))).scalars())
+    used = set((await session.execute(select(TokoEntry.item_id).distinct())).scalars()) if rows else set()
+    return [item_out(r, r.id in used) for r in rows]
 
 
 @router.post("/items")
@@ -141,7 +143,8 @@ async def update_item(
     if body.position is not None:
         item.position = body.position
     await session.commit()
-    return item_out(item)
+    has = bool(await session.scalar(select(func.count(TokoEntry.id)).where(TokoEntry.item_id == item.id)))
+    return item_out(item, has)
 
 
 @router.delete("/items/{item_id}")
@@ -153,6 +156,13 @@ async def delete_item(
     item = await session.get(TokoItem, item_id)
     if not item:
         raise HTTPException(status_code=404, detail="Data transaksi tidak ditemukan")
+    used = await session.scalar(select(func.count(TokoEntry.id)).where(TokoEntry.item_id == item_id))
+    if used:
+        raise HTTPException(
+            status_code=409,
+            detail="Data transaksi tidak dapat dihapus karena sudah memiliki nominal di tab Transaksi. "
+            "Hapus seluruh isian nominalnya terlebih dahulu.",
+        )
     await session.delete(item)
     await session.commit()
     return {"deleted": item_id}

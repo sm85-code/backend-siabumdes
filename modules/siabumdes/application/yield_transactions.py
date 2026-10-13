@@ -53,7 +53,7 @@ async def save_linked_payment(session, actor, unit, partner, body, amount):
     tx = tx or Transaction(unit_usaha_id=unit.id, created_by=actor.id, proofs=[])
     tx.date, tx.amount = body.transaction_date, amount
     tx.transaction_type = TYPE_CODE
-    tx.description = f'Pembayaran Imbal Hasil - {partner.name} - {body.month:02d}/{body.year}'
+    tx.description = payment_description(partner.name, body.year, body.month)
     tx.debit_account_code, tx.credit_account_code = kind.debit, kind.credit
     tx.reference = f'YIELD:{partner.id}:{body.year}:{body.month:02d}'
     session.add(tx)
@@ -85,3 +85,37 @@ async def delete_linked_payment(session, actor, unit, partner, body):
             await session.delete(entry)
             await session.flush()
         await session.delete(tx)
+
+
+def payment_description(partner_name, year, month):
+    return f'Pembayaran Imbal Hasil - {partner_name} - {month:02d}/{year}'
+
+
+async def rename_linked_transactions(session, actor, unit, partner):
+    """Nama mitra berubah -> perbarui keterangan transaksi (+ memo jurnal) terkait.
+
+    Hanya teks keterangan; nominal/akun tidak disentuh. Transaksi di periode yang
+    sudah tutup buku/dikunci (assert_can_mutate_period menolak) dilewati.
+    Mengembalikan (jumlah diperbarui, jumlah dilewati).
+    """
+    payments = (await session.execute(select(YieldPayment).where(
+        YieldPayment.partner_id == partner.id, YieldPayment.transaction_id.is_not(None)))).scalars()
+    updated = skipped = 0
+    for payment in payments:
+        tx = await session.get(Transaction, payment.transaction_id, with_for_update=True)
+        if not tx:
+            continue
+        text = payment_description(partner.name, payment.year, payment.month)
+        if tx.description == text:
+            continue
+        try:
+            await assert_can_mutate_period(session, actor, tx.date, unit.id)
+        except HTTPException:
+            skipped += 1
+            continue
+        tx.description = text
+        entry = await session.scalar(select(JournalEntry).where(JournalEntry.transaction_id == tx.id))
+        if entry:
+            entry.memo = text
+        updated += 1
+    return updated, skipped

@@ -5,6 +5,7 @@ UU05 (unit 5 / toko). Pengelola unit lain ditolak 403.
 """
 from __future__ import annotations
 
+import calendar
 import re
 from datetime import date
 from decimal import Decimal
@@ -47,6 +48,14 @@ def _check_period(period: str) -> str:
     if not PERIOD_RE.match(period):
         raise HTTPException(status_code=422, detail="Periode harus berformat YYYY-MM")
     return period
+
+
+def week5_has_saturday(period: str) -> bool:
+    """Minggu ke-1 = tgl 1 s.d. Sabtu pertama; True bila Sabtu minggu ke-5 masih di bulan ini."""
+    y, m = (int(x) for x in period.split("-"))
+    last = calendar.monthrange(y, m)[1]
+    first_saturday = 1 + (5 - date(y, m, 1).weekday()) % 7  # weekday(): Senin=0, Sabtu=5
+    return first_saturday + 28 <= last
 
 
 def item_out(item: TokoItem, has_entries: bool = False) -> dict:
@@ -186,6 +195,11 @@ async def upsert_entry(
     session: AsyncSession = Depends(get_db),
 ):
     _check_period(body.period)
+    if body.week == 5 and not week5_has_saturday(body.period) and body.tanggal.strftime("%Y-%m") != body.period:
+        raise HTTPException(
+            status_code=422,
+            detail="Tanggal Minggu ke-5 harus berada dalam periode bulan yang dipilih.",
+        )
     if not await session.get(TokoItem, body.item_id):
         raise HTTPException(status_code=404, detail="Data transaksi tidak ditemukan")
     entry = await session.scalar(

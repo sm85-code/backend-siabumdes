@@ -98,3 +98,20 @@ def test_delete_item_without_entries_allowed():
     s = _DeleteSession(0)
     assert _delete_client(s).delete('/api/v1/toko/items/a').status_code == 200
     assert s.deleted
+
+
+def test_week5_saturday_detection():
+    assert tr.week5_has_saturday('2026-10')  # Sabtu: 3,10,17,24,31
+    assert not tr.week5_has_saturday('2026-02')  # Sabtu: 7,14,21,28
+
+
+@pytest.mark.parametrize('tanggal,status', [('2026-03-01', 422), ('2026-02-28', 404)])
+def test_week5_without_saturday_requires_date_in_month(tanggal, status):
+    class S(_Session):
+        async def get(self, model, key, **kwargs):
+            return None
+    app_client = _client('admin')
+    app_client.app.dependency_overrides[get_db] = lambda: S()
+    body = {'item_id': 'zz', 'period': '2026-02', 'week': 5, 'tanggal': tanggal, 'nominal': '1000'}
+    # 404 = lolos validasi tanggal, lalu item tidak ditemukan
+    assert app_client.put('/api/v1/toko/entries', json=body).status_code == status

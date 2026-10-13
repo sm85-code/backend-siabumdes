@@ -146,7 +146,7 @@ async def create_item(
         created_by=user.username,
     )
     session.add(item)
-    await session.commit()
+    await session.flush()
     return item_out(item)
 
 
@@ -175,7 +175,7 @@ async def update_item(
             unit = await toko_unit(session)
             for entry in entries:
                 await apply_entry_transaction(session, user, unit, entry, item)
-    await session.commit()
+    await session.flush()
     has = bool(await session.scalar(select(func.count(TokoEntry.id)).where(TokoEntry.item_id == item.id)))
     return item_out(item, has)
 
@@ -197,7 +197,7 @@ async def delete_item(
             "Hapus seluruh isian nominalnya terlebih dahulu.",
         )
     await session.delete(item)
-    await session.commit()
+    await session.flush()
     return {"deleted": item_id}
 
 
@@ -241,7 +241,7 @@ async def upsert_entry(
     entry.nominal = body.nominal
     await session.flush()
     await apply_entry_transaction(session, user, await toko_unit(session), entry, item)
-    await session.commit()
+    await session.flush()
     return entry_out(entry)
 
 
@@ -256,5 +256,5 @@ async def delete_entry(
         raise HTTPException(status_code=404, detail="Isian tidak ditemukan")
     await delete_entry_transaction(session, user, await toko_unit(session), entry)
     await session.delete(entry)
-    await session.commit()
+    await session.flush()
     return {"deleted": entry_id}

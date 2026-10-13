@@ -72,7 +72,7 @@ class _DeleteSession:
     async def delete(self, obj):
         self.deleted = True
 
-    async def commit(self):
+    async def flush(self):
         pass
 
 

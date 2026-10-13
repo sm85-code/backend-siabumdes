@@ -37,6 +37,8 @@ async def save_linked_payment(session, actor, unit, partner, body, amount):
     assert_not_readonly(actor)
     if amount <= 0:
         raise HTTPException(422, 'Nominal pembayaran harus lebih dari nol untuk membuat transaksi')
+    if 'transaction_date' in body.model_fields_set and body.transaction_date.year != body.year:
+        raise HTTPException(422, f'Tanggal transaksi harus berada di tahun {body.year}.')
     payment = await find_payment(session, partner, body.year, body.month)
     tx = await session.get(Transaction, payment.transaction_id, with_for_update=True) if payment and payment.transaction_id else None
     if payment and payment.transaction_id and not tx:

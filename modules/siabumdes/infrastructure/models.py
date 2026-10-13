@@ -16,6 +16,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     Numeric,
     String,
     Text,
@@ -213,9 +214,11 @@ class YieldPartner(Base):
 
 
 class YieldPayment(Base):
-    """Recorded monthly payout, independent of financial journal posting."""
+    """Recorded payout per partner/month/week (week 0 = legacy monthly row)."""
     __tablename__ = "yield_payments"
-    __table_args__ = (UniqueConstraint("partner_id", "year", "month", name="uq_yield_payment_period"),)
+    __table_args__ = (
+        Index("uq_yield_payment_period_week", "partner_id", "year", "month", "week", unique=True),
+    )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=_uuid)
     partner_id: Mapped[str] = mapped_column(
@@ -227,3 +230,5 @@ class YieldPayment(Base):
     transaction_id: Mapped[Optional[str]] = mapped_column(String(64), ForeignKey("transactions.id", ondelete="RESTRICT"), nullable=True)
     transaction_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     automatic: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    # 1..5 = Minggu ke-N (input mingguan Manajemen Setoran); 0 = data bulanan lama / Riska.
+    week: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")

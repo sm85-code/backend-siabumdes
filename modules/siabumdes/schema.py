@@ -48,6 +48,17 @@ _ADD_COLUMNS = [
     ("stock_cards", "movement_kind", "VARCHAR(16) NOT NULL DEFAULT 'sale'"),
     ("unit_usaha", "business_type", "VARCHAR(20) NOT NULL DEFAULT 'jasa'"),
     ("toko_entries", "transaction_id", "VARCHAR(64) REFERENCES transactions(id) ON DELETE RESTRICT"),
+    ("yield_payments", "week", "INTEGER NOT NULL DEFAULT 0"),
+]
+
+# DDL lanjutan setelah _ADD_COLUMNS (idempoten, tanpa menghapus data).
+# Manajemen Setoran mingguan: unik per mitra/tahun/bulan/minggu, bukan lagi per bulan.
+# Baris lama mendapat week=0 dari DEFAULT sehingga tetap unik dan tetap tampil.
+_POST_DDL = [
+    ("CREATE UNIQUE INDEX IF NOT EXISTS uq_yield_payment_period_week ON yield_payments (partner_id, year, month, week)",
+     "create index uq_yield_payment_period_week"),
+    ("ALTER TABLE yield_payments DROP CONSTRAINT IF EXISTS uq_yield_payment_period",
+     "drop constraint uq_yield_payment_period"),
 ]
 
 
@@ -119,6 +130,8 @@ async def ensure_schema() -> None:
                 f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {col_def}",
                 f"add column {table}.{column}",
             )
+        for sql, label in _POST_DDL:
+            await _safe_exec(conn, sql, label)
         if not business_type_existed:
             # unit_usaha.business_type baru ditambahkan dengan default 'jasa' di atas;
             # UU05/UU06 sudah dipakai sebagai unit dagang (HPP) sebelum kolom ini ada,

@@ -1,4 +1,6 @@
 """Atomic payment/finance linkage using existing period guards and journals."""
+from datetime import date
+
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
@@ -28,16 +30,39 @@ async def lock_partner(session, partner_id, unit):
     return partner
 
 
-async def find_payment(session, partner, year, month):
-    return await session.scalar(select(YieldPayment).where(YieldPayment.partner_id == partner.id,
-        YieldPayment.year == year, YieldPayment.month == month))
+def week_of(day: date) -> int:
+    """Minggu ke-N dalam bulan: minggu ke-1 = tgl 1 s.d. Sabtu pertama, lalu Minggu–Sabtu (maks. 5)."""
+    first_saturday = 1 + (5 - day.replace(day=1).weekday()) % 7
+    if day.day <= first_saturday:
+        return 1
+    return min(5, 1 + -(-(day.day - first_saturday) // 7))
+
+
+def effective_week(payment) -> int:
+    """Data bulanan lama (week 0) ditampilkan di minggu tanggal transaksinya (default minggu ke-1)."""
+    if payment.week:
+        return payment.week
+    return week_of(payment.transaction_date) if payment.transaction_date else 1
+
+
+async def find_payment(session, partner, year, month, week=None):
+    """week=None: pembayaran apa pun di bulan itu (perilaku lama, dipakai Riska).
+    week=1..5: isian minggu tsb, termasuk data lama (week 0) yang jatuh di minggu itu."""
+    rows = [r for r in (await session.execute(select(YieldPayment).where(YieldPayment.partner_id == partner.id,
+        YieldPayment.year == year, YieldPayment.month == month).order_by(YieldPayment.week.asc()))).scalars()
+        if r.partner_id == partner.id and r.month == month]
+    if week is None or week == 0:
+        return next((r for r in rows if r.week == 0), None) if week == 0 else (rows[0] if rows else None)
+    return next((r for r in rows if r.week == week), None) or next(
+        (r for r in rows if r.week == 0 and effective_week(r) == week), None)
 
 
 async def save_linked_payment(session, actor, unit, partner, body, amount):
     assert_not_readonly(actor)
     if amount <= 0:
         raise HTTPException(422, 'Nominal pembayaran harus lebih dari nol untuk membuat transaksi')
-    payment = await find_payment(session, partner, body.year, body.month)
+    week = getattr(body, "week", 0) or 0
+    payment = await find_payment(session, partner, body.year, body.month, week)
     tx = await session.get(Transaction, payment.transaction_id, with_for_update=True) if payment and payment.transaction_id else None
     if payment and payment.transaction_id and not tx:
         raise HTTPException(409, 'Transaksi terkait tidak ditemukan; hubungi admin')
@@ -53,21 +78,26 @@ async def save_linked_payment(session, actor, unit, partner, body, amount):
     tx = tx or Transaction(unit_usaha_id=unit.id, created_by=actor.id, proofs=[])
     tx.date, tx.amount = body.transaction_date, amount
     tx.transaction_type = TYPE_CODE
-    tx.description = f'Pembayaran Imbal Hasil - {partner.name} - {body.month:02d}/{body.year}'
+    if week:
+        tx.description = f'Pembayaran Imbal Hasil - {partner.name} - Minggu {week} - {body.month:02d}/{body.year}'
+    else:
+        tx.description = f'Pembayaran Imbal Hasil - {partner.name} - {body.month:02d}/{body.year}'
     tx.debit_account_code, tx.credit_account_code = kind.debit, kind.credit
-    tx.reference = f'YIELD:{partner.id}:{body.year}:{body.month:02d}'
+    tx.reference = f'YIELD:{partner.id}:{body.year}:{body.month:02d}' + (f':W{week}' if week else '')
     session.add(tx)
     await session.flush()
     await sync_transaction_journal(session, tx, unit.code)
     payment = payment or YieldPayment(partner_id=partner.id, year=body.year, month=body.month)
     payment.amount, payment.automatic = amount, body.automatic
+    payment.week = week
     payment.transaction_id, payment.transaction_date = tx.id, tx.date
     session.add(payment)
     return payment
 
 
 async def delete_linked_payment(session, actor, unit, partner, body):
-    payment = await find_payment(session, partner, body.year, body.month)
+    week = getattr(body, "week", 0) or 0
+    payment = await find_payment(session, partner, body.year, body.month, week or None)
     if not payment:
         raise HTTPException(404, 'Belum ada pembayaran untuk bulan yang dipilih')
     assert_not_readonly(actor)

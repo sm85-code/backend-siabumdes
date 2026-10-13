@@ -138,7 +138,7 @@ def _tx_out(row: Transaction) -> dict:
 
 def _assert_not_bagi_hasil(reference: Optional[str]) -> None:
     if reference and reference.startswith("YIELD:"):
-        raise HTTPException(400, "Transaksi Imbal Hasil otomatis hanya dapat diubah/dihapus melalui menu Imbal Hasil")
+        raise HTTPException(400, "Transaksi Imbal Hasil otomatis hanya dapat diubah/dihapus melalui menu Manajemen Setoran")
     if reference and reference.startswith("TOKO:"):
         raise HTTPException(400, "Transaksi Manajemen Toko otomatis hanya dapat diubah/dihapus melalui menu Manajemen Toko")
     if is_bh_reference(reference):

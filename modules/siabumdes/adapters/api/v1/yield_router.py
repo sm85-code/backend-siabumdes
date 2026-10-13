@@ -27,7 +27,7 @@ async def require_yield_unit(
 ) -> UnitUsaha:
     unit = (await session.execute(select(UnitUsaha).where(UnitUsaha.code == "UU04"))).scalar_one_or_none()
     if public_role(user.role) == "pengelola" and (not unit or user.unit_usaha_id != unit.id):
-        raise HTTPException(403, "Imbal Hasil hanya untuk pengelola unit 4")
+        raise HTTPException(403, "Manajemen Setoran hanya untuk pengelola unit 4")
     if not unit:
         raise HTTPException(404, "Unit usaha UU04 belum tersedia")
     return unit

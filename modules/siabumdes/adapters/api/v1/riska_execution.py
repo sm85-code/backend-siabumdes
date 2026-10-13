@@ -175,7 +175,7 @@ async def prepare(session, user, unit, data):
         partner = await lock_partner(session, data["mitra"], unit)
         body = PaymentIn(transaction_date=when, year=int(data["tahun"]), month=int(data["bulan"]), amount=money(data["nominal"]))
         if await find_payment(session, partner, body.year, body.month):
-            raise HTTPException(409, "Pembayaran bulan ini sudah ada; ubah melalui halaman Imbal Hasil")
+            raise HTTPException(409, "Pembayaran bulan ini sudah ada; ubah melalui halaman Manajemen Setoran")
         kind = await session.scalar(select(TransactionType).where(TransactionType.group_code == unit.code,
                                                                   TransactionType.code == TYPE_CODE))
         if not kind:

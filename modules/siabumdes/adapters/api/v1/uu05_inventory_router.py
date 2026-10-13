@@ -238,6 +238,56 @@ async def list_categories(
     return await InventoryService(session).list_categories()
 
 
+class CategoryBody(BaseModel):
+    code: str = Field(min_length=1, max_length=32)
+    name: str = Field(min_length=1, max_length=255)
+    description: Optional[str] = Field(default=None, max_length=500)
+
+
+class CategoryPatch(BaseModel):
+    code: Optional[str] = Field(default=None, min_length=1, max_length=32)
+    name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    description: Optional[str] = Field(default=None, max_length=500)
+
+
+@router.post("/categories")
+async def create_category(
+    body: CategoryBody,
+    _: User = Depends(require_roles("admin")),
+    session: AsyncSession = Depends(get_db),
+):
+    try:
+        return await InventoryService(session).create_category(code=body.code, name=body.name, description=body.description)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.put("/categories/{category_id}")
+async def update_category(
+    category_id: str,
+    body: CategoryPatch,
+    _: User = Depends(require_roles("admin")),
+    session: AsyncSession = Depends(get_db),
+):
+    try:
+        return await InventoryService(session).update_category(category_id, code=body.code, name=body.name, description=body.description)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.delete("/categories/{category_id}")
+async def delete_category(
+    category_id: str,
+    _: User = Depends(require_roles("admin")),
+    session: AsyncSession = Depends(get_db),
+):
+    try:
+        await InventoryService(session).delete_category(category_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"deleted": category_id}
+
+
 @router.get("/products")
 async def list_products(
     category_id: Optional[str] = None,

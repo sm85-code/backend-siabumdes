@@ -40,7 +40,7 @@ FIELDS = {
  'akun': ['code', 'name', 'category', 'subcategory', 'normal_balance'],
  'pengguna': ['username', 'name', 'email', 'role'],
  'unit': ['code', 'name', 'business_type', 'clone_coa'],
- 'produk': ['sku', 'name', 'category_id', 'unit_of_measure', 'cost_price', 'sell_price'],
+ 'produk': ['category_id', 'sku', 'name', 'unit_of_measure', 'cost_price', 'sell_price'],
  'mitra': ['name', 'capital'],
  'pembayaran': ['partner_id', 'year', 'month', 'transaction_date', 'amount'],
  'toko': ['name', 'jenis', 'keterangan'],
@@ -60,7 +60,7 @@ NAMES = {
  'debit_account_code': 'akun debit (nama akun atau kode)', 'credit_account_code': 'akun kredit (nama akun atau kode)',
  'code': 'kode', 'name': 'nama lengkap', 'category': 'kategori COA', 'subcategory': 'subkategori COA (atau kosong)',
  'normal_balance': 'saldo normal (debit / kredit)', 'username': 'username', 'email': 'email', 'role': 'role',
- 'business_type': 'jenis usaha (jasa / perdagangan / manufaktur)', 'sku': 'SKU produk baru', 'category_id': 'kategori produk (nama atau kode)',
+ 'business_type': 'jenis usaha (jasa / perdagangan / manufaktur)', 'sku': 'SKU produk baru (format KRS.<KODE KATEGORI>-<KODE>, mis. KRS.PRT-001)', 'category_id': 'kategori produk (nama atau kode)',
  'unit_of_measure': 'satuan barang (misalnya pcs)', 'cost_price': 'harga modal per barang', 'sell_price': 'harga jual per barang',
  'capital': 'modal mitra', 'partner_id': 'nama mitra', 'year': 'tahun pembayaran', 'month': 'bulan pembayaran',
  'unit_usaha_id': 'unit penugasan (nama / kode)', 'active': 'status unit (aktif / nonaktif)',
@@ -416,8 +416,15 @@ async def validate(session, user, state, unit, existing):
             raise ValueError('Produk memiliki stok/riwayat mutasi; penghapusan tidak boleh menghapus jurnal historis.')
     if resource == 'produk' and action != 'delete':
         (inventory.ProductCreateBody if action == 'create' else inventory.ProductUpdateBody)(**data)
-        if data.get('category_id'):
-            await lookup(session, StockCategory, data['category_id'], [])
+        category = await lookup(session, StockCategory, data['category_id'], []) if data.get('category_id') else None
+        if action == 'create' and category:
+            from modules.siabumdes.inventory.application.catalog import validate_sku
+            data['sku'] = validate_sku(str(data.get('sku', '')), category.code)
+        if action == 'update' and existing:
+            from modules.siabumdes.inventory.application.services import InventoryService
+            moved = str(data.get('category_id')) != str(existing.category_id) or Decimal(str(data.get('cost_price', existing.cost_price))) != existing.cost_price
+            if moved and (existing.qty_on_hand != 0 or await InventoryService(session).product_has_history(existing.id)):
+                raise ValueError('Kategori dan HPP terkunci karena produk sudah memiliki stok/riwayat mutasi')
     if resource == 'mitra' and action != 'delete':
         yields.PartnerIn(**data)
     if resource == 'toko':

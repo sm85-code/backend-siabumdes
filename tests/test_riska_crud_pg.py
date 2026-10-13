@@ -124,10 +124,10 @@ async def test_product_update_scope_stale_cancel_and_delete(crud_context):
     assert product.name == 'Daster Arab Jumbo'
     refused = await talk(session, admin, 'hapus produk Daster Arab Jumbo', [], unit)
     assert not refused.get('draft_id') and 'riwayat' in refused['message']
-    new = await talk(session, admin, 'tambah produk', ['SKU-NEW', 'Beras Desa', 'Test', 'kg', '10 ribu', '12 ribu'], unit)
+    new = await talk(session, admin, 'tambah produk', ['Test', 'KRS.TEST-NEW', 'Beras Desa', 'kg', '10 ribu', '12 ribu'], unit)
     assert new.get('draft_id'), new
     await execute(new['draft_id'], admin, session)
-    found = await session.scalar(select(Product).where(Product.sku == 'SKU-NEW'))
+    found = await session.scalar(select(Product).where(Product.sku == 'KRS.TEST-NEW'))
     assert found.qty_on_hand == 0
     deletion = await talk(session, admin, 'hapus produk Beras Desa', [], unit)
     await execute(deletion['draft_id'], admin, session)

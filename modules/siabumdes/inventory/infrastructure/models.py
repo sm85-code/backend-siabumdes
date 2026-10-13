@@ -37,6 +37,7 @@ class StockCategory(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     code: Mapped[str] = mapped_column(String(32), unique=True, nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     unit_usaha_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("unit_usaha.id", ondelete="RESTRICT"), nullable=False, index=True
     )

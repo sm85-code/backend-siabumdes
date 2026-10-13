@@ -16,7 +16,7 @@ from modules.siabumdes.infrastructure.models import UnitUsaha, YieldPartner, Yie
 from shared.config import public_role
 from shared.database import get_db
 
-from modules.siabumdes.application.yield_transactions import lock_partner, save_linked_payment, delete_linked_payment
+from modules.siabumdes.application.yield_transactions import lock_partner, save_linked_payment, delete_linked_payment, rename_linked_transactions
 
 router = APIRouter(prefix="/api/imbal-hasil", tags=["imbal-hasil"])
 
@@ -100,7 +100,13 @@ async def update_partner(partner_id: str, body: PartnerIn, request: Request,
                          unit: UnitUsaha = Depends(require_yield_writer), session: AsyncSession = Depends(get_db),
                          actor: User = Depends(require_roles("admin", "direktur", "bendahara", "pengelola"))):
     row = await partner_for(session, unit, partner_id)
-    return await save_partner(body, row, session, actor, request, "update_yield_partner")
+    old_name = row.name
+    # Modal baru hanya berlaku untuk pembayaran berikutnya; nominal tercatat tidak dihitung ulang.
+    out = await save_partner(body, row, session, actor, request, "update_yield_partner")
+    if row.name != old_name:
+        updated, skipped = await rename_linked_transactions(session, actor, unit, row)
+        out["renamed_transactions"], out["skipped_transactions"] = updated, skipped
+    return out
 
 
 @router.delete("/mitra/{partner_id}", status_code=204)

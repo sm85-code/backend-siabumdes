@@ -17,6 +17,12 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from modules.siabumdes.adapters.api.deps import require_roles
+from modules.siabumdes.adapters.api.scope import assert_unit_active
+from modules.siabumdes.application.toko_transactions import (
+    apply_entry_transaction,
+    delete_entry_transaction,
+    toko_unit,
+)
 from modules.siabumdes.identity.infrastructure.models import User
 from modules.siabumdes.infrastructure.models import UnitUsaha
 from modules.siabumdes.toko.infrastructure.models import TokoEntry, TokoItem
@@ -41,6 +47,16 @@ async def require_toko_user(
     unit = await session.get(UnitUsaha, user.unit_usaha_id)
     if not unit or (unit.code or "").upper() != TOKO_UNIT_CODE:
         raise HTTPException(status_code=403, detail="Manajemen Toko hanya untuk pengelola unit 5 (UU05)")
+    return user
+
+
+async def require_toko_writer(
+    user: User = Depends(require_toko_user),
+    session: AsyncSession = Depends(get_db),
+) -> User:
+    """Sama seperti Imbal Hasil: unit UU05 yang nonaktif hanya bisa dilihat."""
+    unit = await toko_unit(session)
+    await assert_unit_active(session, unit.id)
     return user
 
 
@@ -77,6 +93,7 @@ def entry_out(entry: TokoEntry) -> dict:
         "week": entry.week,
         "tanggal": entry.tanggal.isoformat(),
         "nominal": str(entry.nominal),
+        "transaction_id": entry.transaction_id,
     }
 
 
@@ -99,7 +116,7 @@ class EntryUpsertBody(BaseModel):
     period: str
     week: int = Field(ge=1, le=5)
     tanggal: date
-    nominal: Decimal = Field(ge=0, max_digits=18, decimal_places=2)
+    nominal: Decimal = Field(gt=0, max_digits=18, decimal_places=2)
 
 
 @router.get("/items")
@@ -115,7 +132,7 @@ async def list_items(
 @router.post("/items")
 async def create_item(
     body: ItemCreateBody,
-    user: User = Depends(require_toko_user),
+    user: User = Depends(require_toko_writer),
     session: AsyncSession = Depends(get_db),
 ):
     position = body.position
@@ -137,7 +154,7 @@ async def create_item(
 async def update_item(
     item_id: str,
     body: ItemUpdateBody,
-    _: User = Depends(require_toko_user),
+    user: User = Depends(require_toko_writer),
     session: AsyncSession = Depends(get_db),
 ):
     item = await session.get(TokoItem, item_id)
@@ -151,6 +168,13 @@ async def update_item(
         item.keterangan = body.keterangan
     if body.position is not None:
         item.position = body.position
+    if body.name is not None or body.jenis is not None:
+        # Nama/jenis berubah -> keterangan & jenis transaksi UU05 terkait ikut diperbarui.
+        entries = (await session.execute(select(TokoEntry).where(TokoEntry.item_id == item.id))).scalars().all()
+        if entries:
+            unit = await toko_unit(session)
+            for entry in entries:
+                await apply_entry_transaction(session, user, unit, entry, item)
     await session.commit()
     has = bool(await session.scalar(select(func.count(TokoEntry.id)).where(TokoEntry.item_id == item.id)))
     return item_out(item, has)
@@ -159,7 +183,7 @@ async def update_item(
 @router.delete("/items/{item_id}")
 async def delete_item(
     item_id: str,
-    _: User = Depends(require_toko_user),
+    _: User = Depends(require_toko_writer),
     session: AsyncSession = Depends(get_db),
 ):
     item = await session.get(TokoItem, item_id)
@@ -191,7 +215,7 @@ async def list_entries(
 @router.put("/entries")
 async def upsert_entry(
     body: EntryUpsertBody,
-    user: User = Depends(require_toko_user),
+    user: User = Depends(require_toko_writer),
     session: AsyncSession = Depends(get_db),
 ):
     _check_period(body.period)
@@ -200,7 +224,8 @@ async def upsert_entry(
             status_code=422,
             detail="Tanggal transaksi harus berada dalam periode bulan yang dipilih.",
         )
-    if not await session.get(TokoItem, body.item_id):
+    item = await session.get(TokoItem, body.item_id)
+    if not item:
         raise HTTPException(status_code=404, detail="Data transaksi tidak ditemukan")
     entry = await session.scalar(
         select(TokoEntry).where(
@@ -214,6 +239,8 @@ async def upsert_entry(
         session.add(entry)
     entry.tanggal = body.tanggal
     entry.nominal = body.nominal
+    await session.flush()
+    await apply_entry_transaction(session, user, await toko_unit(session), entry, item)
     await session.commit()
     return entry_out(entry)
 
@@ -221,12 +248,13 @@ async def upsert_entry(
 @router.delete("/entries/{entry_id}")
 async def delete_entry(
     entry_id: str,
-    _: User = Depends(require_toko_user),
+    user: User = Depends(require_toko_writer),
     session: AsyncSession = Depends(get_db),
 ):
     entry = await session.get(TokoEntry, entry_id)
     if not entry:
         raise HTTPException(status_code=404, detail="Isian tidak ditemukan")
+    await delete_entry_transaction(session, user, await toko_unit(session), entry)
     await session.delete(entry)
     await session.commit()
     return {"deleted": entry_id}

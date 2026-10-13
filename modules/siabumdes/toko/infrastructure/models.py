@@ -53,6 +53,10 @@ class TokoEntry(Base):
     week: Mapped[int] = mapped_column(Integer, nullable=False)
     tanggal: Mapped[date] = mapped_column(Date, nullable=False)
     nominal: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, default=Decimal("0"))
+    # Transaksi UU05 otomatis (reference TOKO:<entry_id>); lihat application/toko_transactions.py
+    transaction_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("transactions.id", ondelete="RESTRICT"), nullable=True
+    )
     created_by: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 

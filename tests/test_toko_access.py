@@ -28,6 +28,7 @@ def _client(role, unit_id=None):
     app.include_router(tr.router)
     user = SimpleNamespace(id='x', username='x', role=role, unit_usaha_id=unit_id, active=True)
     app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[tr.require_toko_writer] = tr.require_toko_user
 
     async def _db():
         yield _Session()
@@ -79,6 +80,7 @@ def _delete_client(session):
     app = FastAPI()
     app.include_router(tr.router)
     app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id='x', username='x', role='admin', unit_usaha_id=None)
+    app.dependency_overrides[tr.require_toko_writer] = tr.require_toko_user
 
     async def _db():
         yield session

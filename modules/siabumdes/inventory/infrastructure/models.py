@@ -100,6 +100,8 @@ class StockCard(Base):
     finance_status: Mapped[str] = mapped_column(
         String(32), nullable=False, default="pending"
     )  # pending | posted | cancelled
+    # Satu nota (multi-baris) = id kartu kepala; NULL untuk data lama (1 baris).
+    nota_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     product: Mapped["Product"] = relationship(back_populates="stock_cards")

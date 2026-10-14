@@ -8,7 +8,11 @@ from typing import Any, Optional
 from sqlalchemy import select, update
 from sqlalchemy.orm import selectinload
 
-from modules.siabumdes.inventory.application.descriptions import belanja_modal_awal_description, inventory_description
+from modules.siabumdes.inventory.application.descriptions import (
+    belanja_modal_awal_nota_description,
+    inventory_description,
+    nota_products,
+)
 from modules.siabumdes.inventory.application.coa import validate_coa_codes
 from modules.siabumdes.inventory.infrastructure.models import (
     CommercialDocument,
@@ -49,6 +53,12 @@ def stock_in_price_error(product: Product, unit_cost: Decimal) -> Optional[str]:
     if product.qty_on_hand > 0 and cost > 0 and Decimal(unit_cost).quantize(Decimal("0.01")) != cost:
         return f"Harga beli berbeda dengan HPP SKU ini ({_rupiah(cost)}). Buat SKU baru untuk harga baru."
     return None
+
+
+def _line_error(index: int, product: Optional[Product], exc: Exception) -> str:
+    """Pesan error nota multi-baris, contoh: 'Baris 2 [KRS.MM-OYK]: insufficient stock'."""
+    sku = f" [{product.sku}]" if product is not None and getattr(product, "sku", None) else ""
+    return f"Baris {index}{sku}: {exc}"
 
 
 class InventoryStockMixin:
@@ -93,6 +103,17 @@ class InventoryStockMixin:
         product_id: str,
         quantity: int,
         unit_cost: Decimal,
+        **header: Any,
+    ) -> StockCard:
+        cards = await self.stock_in_nota(
+            lines=[{"product_id": product_id, "quantity": quantity, "unit_cost": unit_cost}], **header
+        )
+        return cards[0]
+
+    async def stock_in_nota(
+        self,
+        *,
+        lines: list[dict[str, Any]],
         movement_date: date,
         unit_usaha_id: str,
         debit_account_code: str,
@@ -102,9 +123,15 @@ class InventoryStockMixin:
         payment_method: str = "cash",
         due_date: Optional[date] = None,
         created_by: str = "system-inventory",
-    ) -> StockCard:
-        if quantity <= 0:
-            raise ValueError("quantity must be > 0")
+    ) -> list[StockCard]:
+        """Satu nota pembelian: banyak baris barang, satu jurnal, satu Purchase.
+
+        Semua baris berada di satu transaksi DB; satu baris gagal -> semua batal
+        (pemanggil rollback). Kartu stok pertama menjadi kepala nota
+        (nota_id = id kartu pertama; referensi jurnal stock-in:<id kepala>).
+        """
+        if not lines:
+            raise ValueError("minimal satu barang")
         if payment_method not in _PURCHASE_METHODS:
             raise ValueError("metode pembayaran pembelian tidak valid")
         if payment_method == "credit" and not due_date:
@@ -113,31 +140,51 @@ class InventoryStockMixin:
         if modal_awal:
             debit_account_code, credit_account_code = _MODAL_AWAL_ACCOUNTS
             due_date = None
-        product = await self._get_product_for_update(product_id)
-        price_error = stock_in_price_error(product, unit_cost)
-        if price_error:
-            raise HppMismatchError(price_error)
         vendor = await self.session.get(Vendor, vendor_id) if vendor_id else None
         if not vendor and not (modal_awal and not vendor_id):
             raise ValueError("vendor tidak ditemukan")
-        total = (unit_cost * quantity).quantize(Decimal("0.01"))
-        card = StockCard(
-            product_id=product_id,
-            movement_date=movement_date,
-            direction="in",
-            quantity=quantity,
-            unit_cost=unit_cost,
-            total_value=total,
-            reference="",
-            finance_status="pending",
-        )
-        if product.qty_on_hand <= 0 or not product.cost_price:
-            # Stok kosong: tidak ada stok lama yang salah dinilai.
-            product.cost_price = unit_cost
-        product.qty_on_hand += quantity
-        self.session.add(card)
-        await self.session.flush()
-        card.reference = f"stock-in:{card.id}"
+        multi = len(lines) > 1
+        cards: list[tuple[StockCard, Product]] = []
+        total = Decimal("0.00")
+        for i, line in enumerate(lines, start=1):
+            quantity = int(line["quantity"])
+            unit_cost = Decimal(line["unit_cost"])
+            product = None
+            try:
+                if quantity <= 0:
+                    raise ValueError("quantity must be > 0")
+                product = await self._get_product_for_update(line["product_id"])
+                price_error = stock_in_price_error(product, unit_cost)
+                if price_error:
+                    raise HppMismatchError(price_error)
+            except ValueError as exc:
+                if not multi:
+                    raise
+                raise type(exc)(_line_error(i, product, exc)) from exc
+            line_total = (unit_cost * quantity).quantize(Decimal("0.01"))
+            total += line_total
+            card = StockCard(
+                product_id=product.id,
+                movement_date=movement_date,
+                direction="in",
+                quantity=quantity,
+                unit_cost=unit_cost,
+                total_value=line_total,
+                reference="",
+                finance_status="pending",
+            )
+            if product.qty_on_hand <= 0 or not product.cost_price:
+                # Stok kosong: tidak ada stok lama yang salah dinilai.
+                product.cost_price = unit_cost
+            product.qty_on_hand += quantity
+            self.session.add(card)
+            await self.session.flush()
+            cards.append((card, product))
+        head = cards[0][0]
+        for card, _ in cards:
+            card.nota_id = head.id
+            card.reference = f"stock-in:{head.id}"
+        items = [(p.sku, p.name, c.quantity, p.unit_of_measure) for c, p in cards]
         await validate_coa_codes(self.session, debit_account_code, credit_account_code)
         await self.finance.record_inventory_journal(
             movement_date=movement_date,
@@ -146,21 +193,18 @@ class InventoryStockMixin:
             debit_account_code=debit_account_code,
             credit_account_code=credit_account_code,
             description=(
-                belanja_modal_awal_description(
-                    sku=product.sku,
-                    name=product.name,
-                    quantity=quantity,
-                    unit=product.unit_of_measure,
-                ) if modal_awal else
-                inventory_description("Pembelian Stok", partner=vendor.name, invoice=invoice_number, product=product.name, quantity=quantity)
+                belanja_modal_awal_nota_description(items) if modal_awal else
+                inventory_description("Pembelian Stok", partner=vendor.name, invoice=invoice_number,
+                                      product=nota_products(items), quantity=None if multi else items[0][2])
             ),
-            reference=card.reference,
+            reference=head.reference,
             created_by=created_by,
             transaction_type="inventory_purchase",
         )
-        card.finance_status = "posted"
+        for card, _ in cards:
+            card.finance_status = "posted"
         purchase = Purchase(
-            stock_card_id=card.id,
+            stock_card_id=head.id,
             vendor_id=vendor_id,
             invoice_number=invoice_number or "",
             payment_method=payment_method,
@@ -170,56 +214,92 @@ class InventoryStockMixin:
         )
         self.session.add(purchase)
         await self.session.flush()
-        return card
+        return [c for c, _ in cards]
 
     async def stock_out(
         self,
         *,
         product_id: str,
         quantity: int,
+        sell_price: Decimal,
+        **header: Any,
+    ) -> StockCard:
+        cards = await self.stock_out_nota(
+            lines=[{"product_id": product_id, "quantity": quantity, "sell_price": sell_price}], **header
+        )
+        return cards[0]
+
+    async def stock_out_nota(
+        self,
+        *,
+        lines: list[dict[str, Any]],
         movement_date: date,
         unit_usaha_id: str,
         debit_account_code: str,
         credit_account_code: str,
         customer_id: str,
-        sell_price: Decimal,
         revenue_debit_account_code: str,
         revenue_credit_account_code: str,
         invoice_number: str = "",
         payment_method: str = "cash",
         due_date: Optional[date] = None,
         created_by: str = "system-inventory",
-    ) -> StockCard:
-        if quantity <= 0:
-            raise ValueError("quantity must be > 0")
-        if sell_price < 0:
-            raise ValueError("harga jual tidak boleh negatif")
+    ) -> list[StockCard]:
+        """Satu nota penjualan: banyak baris, satu jurnal HPP + satu jurnal pendapatan, satu Sale."""
+        if not lines:
+            raise ValueError("minimal satu barang")
         if payment_method not in _SALE_METHODS:
             raise ValueError("metode pembayaran penjualan tidak valid")
         if payment_method == "piutang" and not due_date:
             raise ValueError("tanggal jatuh tempo wajib diisi untuk penjualan piutang")
-        # Lock first so cost_price / existence are stable, then atomic
-        # decrement so two concurrent outs cannot both pass a stale check.
-        product = await self._get_product_for_update(product_id)
         customer = await self.session.get(Customer, customer_id)
         if not customer:
             raise ValueError("customer tidak ditemukan")
-        unit_cost = product.cost_price
-        product = await self._decrement_qty_atomic(product_id, quantity)
-        total = (unit_cost * quantity).quantize(Decimal("0.01"))
-        card = StockCard(
-            product_id=product_id,
-            movement_date=movement_date,
-            direction="out",
-            quantity=quantity,
-            unit_cost=unit_cost,
-            total_value=total,
-            reference="",
-            finance_status="pending",
-        )
-        self.session.add(card)
-        await self.session.flush()
-        card.reference = f"stock-out:{card.id}"
+        multi = len(lines) > 1
+        cards: list[tuple[StockCard, Product]] = []
+        total = Decimal("0.00")
+        revenue_total = Decimal("0.00")
+        for i, line in enumerate(lines, start=1):
+            quantity = int(line["quantity"])
+            sell_price = Decimal(line["sell_price"])
+            product = None
+            try:
+                if quantity <= 0:
+                    raise ValueError("quantity must be > 0")
+                if sell_price < 0:
+                    raise ValueError("harga jual tidak boleh negatif")
+                # Lock first so cost_price / existence are stable, then atomic
+                # decrement so two concurrent outs cannot both pass a stale check.
+                product = await self._get_product_for_update(line["product_id"])
+                unit_cost = product.cost_price
+                product = await self._decrement_qty_atomic(product.id, quantity)
+            except ValueError as exc:
+                if not multi:
+                    raise
+                raise ValueError(_line_error(i, product, exc)) from exc
+            line_total = (unit_cost * quantity).quantize(Decimal("0.01"))
+            total += line_total
+            revenue_total += (sell_price * quantity).quantize(Decimal("0.01"))
+            card = StockCard(
+                product_id=product.id,
+                movement_date=movement_date,
+                direction="out",
+                quantity=quantity,
+                unit_cost=unit_cost,
+                total_value=line_total,
+                reference="",
+                finance_status="pending",
+            )
+            self.session.add(card)
+            await self.session.flush()
+            cards.append((card, product))
+        head = cards[0][0]
+        for card, _ in cards:
+            card.nota_id = head.id
+            card.reference = f"stock-out:{head.id}"
+        items = [(p.sku, p.name, c.quantity, p.unit_of_measure) for c, p in cards]
+        products = nota_products(items)
+        qty = None if multi else items[0][2]
         await validate_coa_codes(self.session, debit_account_code, credit_account_code)
         await self.finance.record_inventory_journal(
             movement_date=movement_date,
@@ -227,15 +307,12 @@ class InventoryStockMixin:
             amount=total,
             debit_account_code=debit_account_code,
             credit_account_code=credit_account_code,
-            description=inventory_description("HPP Penjualan", invoice=invoice_number, product=product.name, quantity=quantity),
-            reference=card.reference,
+            description=inventory_description("HPP Penjualan", invoice=invoice_number, product=products, quantity=qty),
+            reference=head.reference,
             created_by=created_by,
             transaction_type="inventory_cogs",
         )
-
-        revenue_total = (sell_price * quantity).quantize(Decimal("0.01"))
         await validate_coa_codes(self.session, revenue_debit_account_code, revenue_credit_account_code)
-        revenue_reference = f"stock-out-rev:{card.id}"
         if revenue_total > 0:
             await self.finance.record_inventory_journal(
                 movement_date=movement_date,
@@ -243,18 +320,19 @@ class InventoryStockMixin:
                 amount=revenue_total,
                 debit_account_code=revenue_debit_account_code,
                 credit_account_code=revenue_credit_account_code,
-                description=inventory_description("Penjualan", partner=customer.name, invoice=invoice_number, product=product.name, quantity=quantity),
-                reference=revenue_reference,
+                description=inventory_description("Penjualan", partner=customer.name, invoice=invoice_number, product=products, quantity=qty),
+                reference=f"stock-out-rev:{head.id}",
                 created_by=created_by,
                 transaction_type="inventory_sale_revenue",
             )
-
-        card.finance_status = "posted"
+        for card, _ in cards:
+            card.finance_status = "posted"
         sale = Sale(
-            stock_card_id=card.id,
+            stock_card_id=head.id,
             customer_id=customer_id,
             invoice_number=invoice_number or "",
-            sell_price=sell_price,
+            # Nota banyak baris: harga per baris ada di total; sell_price = baris pertama.
+            sell_price=Decimal(lines[0]["sell_price"]),
             payment_method=payment_method,
             total_amount=revenue_total,
             due_date=due_date if payment_method == "piutang" else None,
@@ -262,7 +340,7 @@ class InventoryStockMixin:
         )
         self.session.add(sale)
         await self.session.flush()
-        return card
+        return [c for c, _ in cards]
 
     async def stock_out_internal(
         self,
@@ -323,41 +401,54 @@ class InventoryStockMixin:
         await self.session.flush()
         return card
 
-    async def cancel_movement(self, stock_card_id: str) -> None:
-        """Reverse qty, remove finance journal(s), purchase/sale records, and the stock card.
+    async def nota_cards(self, card: StockCard) -> list[StockCard]:
+        """Semua baris satu nota (kepala dulu). Data lama tanpa nota_id = 1 baris."""
+        if not card.nota_id:
+            return [card]
+        rows = (await self.session.scalars(
+            select(StockCard).where(StockCard.nota_id == card.nota_id)
+            .order_by(StockCard.created_at).with_for_update()
+        )).all()
+        return sorted(rows, key=lambda c: c.id != card.nota_id) or [card]
 
-        Soft-cancel left cancelled rows (and confusing \"jurnal dibatalkan\") in the UI;
-        callers expect cancel to leave the ledger clean.
-        """
+    async def cancel_movement(self, stock_card_id: str) -> None:
+        """Batalkan satu nota (semua barisnya): balik qty, hapus jurnal, purchase/sale, kartu stok."""
         card = await self.session.get(StockCard, stock_card_id, with_for_update=True)
         if not card:
             return
+        cards = await self.nota_cards(card)
+        head_id = card.nota_id or card.id
         documented = await self.session.scalar(
             select(CommercialDocument.number).join(DocumentSource, DocumentSource.document_id == CommercialDocument.id)
             .where(CommercialDocument.status == 'issued', DocumentSource.source_id.in_(
-                select(Purchase.id).where(Purchase.stock_card_id == card.id).union(select(Sale.id).where(Sale.stock_card_id == card.id))
+                select(Purchase.id).where(Purchase.stock_card_id == head_id).union(select(Sale.id).where(Sale.stock_card_id == head_id))
             )).limit(1)
         )
         if documented:
             raise ValueError(f'Batalkan dokumen {documented} terlebih dahulu sebelum membatalkan transaksi stok')
-        if card.finance_status == "cancelled":
+        if all(c.finance_status == "cancelled" for c in cards):
             # Leftover soft-cancelled row from older builds — just purge.
-            await self.session.delete(card)
+            for c in cards:
+                await self.session.delete(c)
             await self.session.flush()
             return
-        product = await self.session.scalar(
-            select(Product).where(Product.id == card.product_id).with_for_update()
-        )
-        if product:
-            if card.direction == "in":
-                product.qty_on_hand = max(0, product.qty_on_hand - card.quantity)
+        for c in cards:
+            product = await self.session.scalar(
+                select(Product).where(Product.id == c.product_id).with_for_update()
+            )
+            if not product:
+                continue
+            if c.direction == "in":
+                if product.qty_on_hand < c.quantity:
+                    raise ValueError(f"Stok {product.name} tidak cukup untuk membatalkan Stock In ini")
+                product.qty_on_hand -= c.quantity
             else:
-                product.qty_on_hand += card.quantity
+                product.qty_on_hand += c.quantity
 
         purchase = await self.session.scalar(
             select(Purchase)
             .options(selectinload(Purchase.payments))
-            .where(Purchase.stock_card_id == card.id)
+            .where(Purchase.stock_card_id == head_id)
         )
         if purchase:
             for payment in list(purchase.payments):
@@ -369,20 +460,21 @@ class InventoryStockMixin:
         sale = await self.session.scalar(
             select(Sale)
             .options(selectinload(Sale.payments))
-            .where(Sale.stock_card_id == card.id)
+            .where(Sale.stock_card_id == head_id)
         )
         if sale:
             for payment in list(sale.payments):
                 if payment.reference:
                     await self.finance.cancel_inventory_journal(payment.reference)
                 await self.session.delete(payment)
-            await self.finance.cancel_inventory_journal(f"stock-out-rev:{card.id}")
+            await self.finance.cancel_inventory_journal(f"stock-out-rev:{head_id}")
             await self.session.delete(sale)
 
-        if card.reference:
-            await self.finance.cancel_inventory_journal(card.reference)
+        for ref in dict.fromkeys(c.reference for c in cards if c.reference):
+            await self.finance.cancel_inventory_journal(ref)
         await self.session.flush()
-        await self.session.delete(card)
+        for c in sorted(cards, key=lambda c: c.id == head_id):
+            await self.session.delete(c)
         await self.session.flush()
 
     async def list_movements(
@@ -411,6 +503,11 @@ class InventoryStockMixin:
         # Cancelled rows are purged on cancel; hide any legacy soft-cancels.
         stmt = stmt.where(StockCard.finance_status != "cancelled")
         rows = (await self.session.scalars(stmt)).all()
+        heads = {c.nota_id or c.id for c in rows}
+        invoices = dict((await self.session.execute(
+            select(Purchase.stock_card_id, Purchase.invoice_number).where(Purchase.stock_card_id.in_(heads))
+            .union_all(select(Sale.stock_card_id, Sale.invoice_number).where(Sale.stock_card_id.in_(heads)))
+        )).all()) if heads else {}
         return [
             {
                 "id": c.id,
@@ -425,6 +522,8 @@ class InventoryStockMixin:
                 "total_value": str(c.total_value),
                 "reference": c.reference,
                 "finance_status": c.finance_status,
+                "nota_id": c.nota_id or c.id,
+                "invoice_number": invoices.get(c.nota_id or c.id) or "",
             }
             for c in rows
         ]

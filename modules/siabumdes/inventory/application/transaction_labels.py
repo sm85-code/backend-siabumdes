@@ -3,7 +3,11 @@
 from sqlalchemy import select
 
 from modules.siabumdes.infrastructure.models import Transaction
-from modules.siabumdes.inventory.application.descriptions import belanja_modal_awal_description, inventory_description
+from modules.siabumdes.inventory.application.descriptions import (
+    belanja_modal_awal_nota_description,
+    inventory_description,
+    nota_products,
+)
 from modules.siabumdes.inventory.infrastructure.models import (
     CommercialDocument,
     DocumentSource,
@@ -37,6 +41,18 @@ async def transaction_labels(session, unit_id, references):
             .where(StockCard.id.in_(ids), Product.unit_usaha_id == unit_id)
         )
     ).all()
+    # Nota multi-baris: kartu kepala (id di referensi) + baris lain (nota_id sama).
+    lines = {}
+    for line, line_product in (
+        await session.execute(
+            select(StockCard, Product).join(Product, StockCard.product_id == Product.id)
+            .where(StockCard.nota_id.in_(ids), Product.unit_usaha_id == unit_id)
+            .order_by(StockCard.created_at)
+        )
+    ).all():
+        lines.setdefault(line.nota_id, []).append(line)
+        lines[line.nota_id].sort(key=lambda c: c.id != line.nota_id)
+        line.product = line_product
     source_ids = [p.id if p else s.id for _, _, p, s, _, _ in rows if p or s]
     links = {
         sid: (doc.id, doc.number)
@@ -66,15 +82,19 @@ async def transaction_labels(session, unit_id, references):
             if ref not in refs:
                 continue
             modal_awal = prefix == "stock-in:" and purchase is not None and purchase.payment_method == "modal_awal"
+            nota = lines.get(card.id) or [card]
+            items = [
+                (c.product.sku, c.product.name, c.quantity, c.product.unit_of_measure) if c is not card
+                else (product.sku, product.name, c.quantity, product.unit_of_measure)
+                for c in nota
+            ]
             result[ref] = {
-                "description": belanja_modal_awal_description(
-                    sku=product.sku, name=product.name, quantity=card.quantity, unit=product.unit_of_measure,
-                ) if modal_awal else inventory_description(
+                "description": belanja_modal_awal_nota_description(items) if modal_awal else inventory_description(
                     action,
                     partner=partner.name if partner else None,
                     invoice=source.invoice_number if source else None,
-                    product=product.name,
-                    quantity=card.quantity,
+                    product=nota_products(items),
+                    quantity=card.quantity if len(items) == 1 else None,
                 ),
                 "document_id": link[0] if link else None,
                 "document_number": link[1] if link else None,

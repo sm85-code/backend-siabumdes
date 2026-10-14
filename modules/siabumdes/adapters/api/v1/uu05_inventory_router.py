@@ -43,6 +43,9 @@ async def _assert_card_periods(session: AsyncSession, user: User, stock_card_id:
     product = await session.get(Product, card.product_id)
     uid = product.unit_usaha_id if product else None
     dates = {card.movement_date}
+    if getattr(card, "nota_id", None):
+        dates.update(await session.scalars(select(StockCard.movement_date).where(StockCard.nota_id == card.nota_id)))
+        card = await session.get(StockCard, card.nota_id) or card
     dates.update(await session.scalars(
         select(PurchasePayment.paid_date).join(Purchase, PurchasePayment.purchase_id == Purchase.id)
         .where(Purchase.stock_card_id == card.id)))
@@ -93,6 +96,7 @@ async def require_active_inventory_writer(
 def card_out(card) -> dict:
     return {
         "id": card.id,
+        "nota_id": card.nota_id or card.id,
         "reference": card.reference,
         "finance_status": card.finance_status,
         "quantity": card.quantity,
@@ -128,6 +132,44 @@ class StockOutBody(BaseModel):
     credit_account_code: str
     customer_id: str
     sell_price: Decimal = Field(ge=0)
+    revenue_debit_account_code: str
+    revenue_credit_account_code: str
+    invoice_number: str = ""
+    payment_method: str = "cash"
+    due_date: Optional[date] = None
+
+
+class StockInLine(BaseModel):
+    product_id: str
+    quantity: int = Field(gt=0)
+    unit_cost: Decimal = Field(ge=0)
+
+
+class StockInNotaBody(BaseModel):
+    lines: list[StockInLine] = Field(min_length=1, max_length=100)
+    movement_date: date
+    unit_usaha_id: Optional[str] = None
+    debit_account_code: str
+    credit_account_code: str
+    vendor_id: Optional[str] = None
+    invoice_number: str = ""
+    payment_method: str = "cash"
+    due_date: Optional[date] = None
+
+
+class StockOutLine(BaseModel):
+    product_id: str
+    quantity: int = Field(gt=0)
+    sell_price: Decimal = Field(ge=0)
+
+
+class StockOutNotaBody(BaseModel):
+    lines: list[StockOutLine] = Field(min_length=1, max_length=100)
+    movement_date: date
+    unit_usaha_id: Optional[str] = None
+    debit_account_code: str
+    credit_account_code: str
+    customer_id: str
     revenue_debit_account_code: str
     revenue_credit_account_code: str
     invoice_number: str = ""
@@ -421,6 +463,46 @@ async def stock_in(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return card_out(card)
+
+
+@router.post("/stock-in-nota")
+async def stock_in_nota(
+    body: StockInNotaBody,
+    user: User = Depends(require_active_inventory_writer),
+    session: AsyncSession = Depends(get_db),
+):
+    """Satu nota pembelian banyak barang; semua baris tersimpan atau tidak sama sekali."""
+    svc = InventoryService(session)
+    try:
+        uid = await resolve_unit_id(session, body.unit_usaha_id, user)
+        await assert_can_mutate_period(session, user, body.movement_date, uid)
+        data = body.model_dump(exclude={"lines", "unit_usaha_id"})
+        cards = await svc.stock_in_nota(
+            lines=[ln.model_dump() for ln in body.lines], unit_usaha_id=uid, created_by=user.username, **data
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"nota_id": cards[0].id, "cards": [card_out(c) for c in cards]}
+
+
+@router.post("/stock-out-nota")
+async def stock_out_nota(
+    body: StockOutNotaBody,
+    user: User = Depends(require_active_inventory_writer),
+    session: AsyncSession = Depends(get_db),
+):
+    """Satu nota penjualan banyak barang; semua baris tersimpan atau tidak sama sekali."""
+    svc = InventoryService(session)
+    try:
+        uid = await resolve_unit_id(session, body.unit_usaha_id, user)
+        await assert_can_mutate_period(session, user, body.movement_date, uid)
+        data = body.model_dump(exclude={"lines", "unit_usaha_id"})
+        cards = await svc.stock_out_nota(
+            lines=[ln.model_dump() for ln in body.lines], unit_usaha_id=uid, created_by=user.username, **data
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"nota_id": cards[0].id, "cards": [card_out(c) for c in cards]}
 
 
 @router.post("/stock-out-internal")

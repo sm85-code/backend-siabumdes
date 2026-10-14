@@ -62,14 +62,25 @@ async def sources(session, kind, unit_id, partner_id=None, start=None, end=None,
         ).all()
     )
     result = []
-    for row, card, product in await trade_rows(session, kind, unit_id, partner_id, start, end, lock=lock):
+    rows = await trade_rows(session, kind, unit_id, partner_id, start, end, lock=lock)
+    # Nota multi-baris: hitung baris lain supaya nama menyebut "+N item".
+    extra = dict(
+        (
+            await session.execute(
+                select(StockCard.nota_id, func.count()).where(
+                    StockCard.nota_id.in_([c.id for _, c, _ in rows]), StockCard.id != StockCard.nota_id
+                ).group_by(StockCard.nota_id)
+            )
+        ).all()
+    ) if rows else {}
+    for row, card, product in rows:
         total, paid, outstanding = balances(row)
         result.append(
             {
                 "id": row.id,
                 "partner_id": getattr(row, KINDS[kind][2]),
                 "date": card.movement_date.isoformat(),
-                "name": product.name,
+                "name": product.name + (f" +{extra[card.id]} item" if extra.get(card.id) else ""),
                 "sku": product.sku,
                 "quantity": card.quantity,
                 "unit": product.unit_of_measure,

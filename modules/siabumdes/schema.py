@@ -47,6 +47,7 @@ _ADD_COLUMNS = [
     ("org_profiles", "share_unit_bumdes", "NUMERIC(5,2) NOT NULL DEFAULT 70"),
     ("users", "photo_url", "VARCHAR(500) NOT NULL DEFAULT ''"),
     ("stock_cards", "movement_kind", "VARCHAR(16) NOT NULL DEFAULT 'sale'"),
+    ("stock_cards", "nota_id", "VARCHAR(36)"),
     ("unit_usaha", "business_type", "VARCHAR(20) NOT NULL DEFAULT 'jasa'"),
     ("toko_entries", "transaction_id", "VARCHAR(64) REFERENCES transactions(id) ON DELETE RESTRICT"),
 ]

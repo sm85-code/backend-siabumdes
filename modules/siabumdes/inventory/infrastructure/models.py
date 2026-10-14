@@ -96,6 +96,8 @@ class StockCard(Base):
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     unit_cost: Mapped[Decimal] = mapped_column(Numeric(20, 2), nullable=False, default=Decimal("0.00"))
     total_value: Mapped[Decimal] = mapped_column(Numeric(20, 2), nullable=False, default=Decimal("0.00"))
+    # Harga jual per unit (Stock Out penjualan); NULL untuk data lama/non-penjualan.
+    sell_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 2), nullable=True)
     reference: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     finance_status: Mapped[str] = mapped_column(
         String(32), nullable=False, default="pending"

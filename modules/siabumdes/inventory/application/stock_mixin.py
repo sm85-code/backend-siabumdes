@@ -289,6 +289,7 @@ class InventoryStockMixin:
                 quantity=quantity,
                 unit_cost=unit_cost,
                 total_value=line_total,
+                sell_price=sell_price,
                 reference="",
                 finance_status="pending",
             )
@@ -510,6 +511,7 @@ class InventoryStockMixin:
             select(Purchase.stock_card_id, Purchase.invoice_number, Purchase.payment_method).where(Purchase.stock_card_id.in_(heads))
             .union_all(select(Sale.stock_card_id, Sale.invoice_number, Sale.payment_method).where(Sale.stock_card_id.in_(heads)))
         )).all()} if heads else {}
+        sale_values = await self._sale_line_values(rows)
         return [
             {
                 "id": c.id,
@@ -527,6 +529,39 @@ class InventoryStockMixin:
                 "nota_id": c.nota_id or c.id,
                 "invoice_number": (docs.get(c.nota_id or c.id) or ("", ""))[0] or "",
                 "payment_method": (docs.get(c.nota_id or c.id) or ("", ""))[1] or "",
+                "sale_value": str(sale_values[c.id]) if c.id in sale_values else None,
             }
             for c in rows
         ]
+
+    async def _sale_line_values(self, rows) -> dict[str, Decimal]:
+        """Nilai jual per baris Stock Out penjualan.
+
+        Pakai qty x sell_price baris bila tersimpan; data lama (sell_price NULL)
+        membagi Sale.total_amount nota secara proporsional terhadap HPP baris.
+        """
+        heads = {c.nota_id or c.id for c in rows if c.direction == "out"}
+        if not heads:
+            return {}
+        sales = dict((await self.session.execute(
+            select(Sale.stock_card_id, Sale.total_amount).where(Sale.stock_card_id.in_(heads))
+        )).all())
+        if not sales:
+            return {}
+        lines = (await self.session.scalars(
+            select(StockCard).where((StockCard.nota_id.in_(sales.keys())) | (StockCard.id.in_(sales.keys())))
+        )).all()
+        by_nota: dict[str, list[StockCard]] = {}
+        for c in lines:
+            by_nota.setdefault(c.nota_id or c.id, []).append(c)
+        out: dict[str, Decimal] = {}
+        for nota, cards in by_nota.items():
+            known = {c.id: (c.sell_price * c.quantity).quantize(Decimal("0.01")) for c in cards if c.sell_price is not None}
+            rest = [c for c in cards if c.sell_price is None]
+            remaining = Decimal(sales[nota]) - sum(known.values(), Decimal("0.00"))
+            base = sum((c.total_value for c in rest), Decimal("0.00"))
+            for c in rest:
+                share = (c.total_value / base) if base else Decimal(1) / len(rest)
+                known[c.id] = (remaining * share).quantize(Decimal("0.01"))
+            out.update(known)
+        return out

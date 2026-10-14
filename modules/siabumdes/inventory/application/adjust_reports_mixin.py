@@ -256,6 +256,11 @@ class InventoryAdjustReportsMixin:
         out_qty = sum(c.quantity for c in rows if c.direction == "out")
         in_value = sum((c.total_value for c in rows if c.direction == "in"), Decimal("0.00"))
         out_value = sum((c.total_value for c in rows if c.direction == "out"), Decimal("0.00"))
+        # Nilai jual: penjualan pakai harga jual, pemakaian internal tetap HPP.
+        sale_values = await self._sale_line_values(rows)
+        out_sale_value = sum(
+            (sale_values.get(c.id, c.total_value) for c in rows if c.direction == "out"), Decimal("0.00")
+        )
         return {
             "date_from": date_from.isoformat() if date_from else None,
             "date_to": date_to.isoformat() if date_to else None,
@@ -267,6 +272,7 @@ class InventoryAdjustReportsMixin:
             "stock_out": {
                 "qty": out_qty,
                 "value": str(out_value),
+                "sale_value": str(out_sale_value),
                 "count": sum(1 for c in rows if c.direction == "out"),
             },
             "net_qty": in_qty - out_qty,

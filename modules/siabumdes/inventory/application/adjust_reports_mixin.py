@@ -144,13 +144,23 @@ class InventoryAdjustReportsMixin:
         }
 
 
-    async def list_adjustments(self, *, limit: int = 100) -> list[dict[str, Any]]:
+    async def list_adjustments(
+        self,
+        *,
+        limit: int = 100,
+        date_from: Optional[date] = None,
+        date_to: Optional[date] = None,
+    ) -> list[dict[str, Any]]:
         stmt = (
             select(StockAdjustment)
             .options(selectinload(StockAdjustment.product))
             .order_by(StockAdjustment.adjustment_date.desc(), StockAdjustment.created_at.desc())
-            .limit(min(limit, 500))
+            .limit(min(limit, 2000))
         )
+        if date_from:
+            stmt = stmt.where(StockAdjustment.adjustment_date >= date_from)
+        if date_to:
+            stmt = stmt.where(StockAdjustment.adjustment_date <= date_to)
         rows = (await self.session.scalars(stmt)).all()
         return [
             {

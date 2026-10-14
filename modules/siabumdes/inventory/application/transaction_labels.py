@@ -3,7 +3,7 @@
 from sqlalchemy import select
 
 from modules.siabumdes.infrastructure.models import Transaction
-from modules.siabumdes.inventory.application.descriptions import inventory_description
+from modules.siabumdes.inventory.application.descriptions import belanja_modal_awal_description, inventory_description
 from modules.siabumdes.inventory.infrastructure.models import (
     CommercialDocument,
     DocumentSource,
@@ -65,8 +65,11 @@ async def transaction_labels(session, unit_id, references):
             ref = prefix + card.id
             if ref not in refs:
                 continue
+            modal_awal = prefix == "stock-in:" and purchase is not None and purchase.payment_method == "modal_awal"
             result[ref] = {
-                "description": inventory_description(
+                "description": belanja_modal_awal_description(
+                    sku=product.sku, name=product.name, quantity=card.quantity, unit=product.unit_of_measure,
+                ) if modal_awal else inventory_description(
                     action,
                     partner=partner.name if partner else None,
                     invoice=source.invoice_number if source else None,

@@ -162,7 +162,7 @@ async def test_stock_out_internal_insufficient_stock_rejected(session):
     ctx = await _setup(session)
     svc = InventoryService(session)
 
-    with pytest.raises(ValueError, match="insufficient stock"):
+    with pytest.raises(ValueError, match=r"Stok tidak cukup \(tersedia 20, diminta 999\)"):
         await svc.stock_out_internal(
             product_id=ctx["product"].id,
             quantity=999,

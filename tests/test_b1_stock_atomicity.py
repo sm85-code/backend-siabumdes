@@ -57,10 +57,12 @@ async def test_decrement_qty_atomic_raises_insufficient():
     scalars_result = MagicMock()
     scalars_result.first.return_value = None
     session.scalars = AsyncMock(return_value=scalars_result)
-    session.get = AsyncMock(return_value=MagicMock())
+    existing = MagicMock()
+    existing.qty_on_hand = 2
+    session.get = AsyncMock(return_value=existing)
 
     svc = _Svc(session)
-    with pytest.raises(ValueError, match="insufficient stock"):
+    with pytest.raises(ValueError, match=r"Stok tidak cukup \(tersedia 2, diminta 5\)"):
         await svc._decrement_qty_atomic("p1", 5)
 
 
@@ -73,7 +75,7 @@ async def test_decrement_qty_atomic_raises_not_found():
     session.get = AsyncMock(return_value=None)
 
     svc = _Svc(session)
-    with pytest.raises(ValueError, match="product not found"):
+    with pytest.raises(ValueError, match="produk tidak ditemukan"):
         await svc._decrement_qty_atomic("missing", 1)
 
 

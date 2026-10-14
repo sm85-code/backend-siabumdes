@@ -216,7 +216,7 @@ async def test_belanja_modal_awal_debits_inventory_credits_cash_without_vendor(s
     session.add(cat)
     await session.flush()
     product = Product(id=str(uuid.uuid4()), unit_usaha_id=unit.id, sku="KRS.MA-1", name="Beras",
-                      category_id=cat.id, qty_on_hand=0, cost_price=Decimal("0"), sell_price=Decimal("0"))
+                      category_id=cat.id, unit_of_measure="kg", qty_on_hand=0, cost_price=Decimal("0"), sell_price=Decimal("0"))
     session.add(product)
     await session.flush()
 
@@ -231,7 +231,7 @@ async def test_belanja_modal_awal_debits_inventory_credits_cash_without_vendor(s
     assert product.qty_on_hand == 10
     tx = await session.scalar(select(Transaction).where(Transaction.reference == card.reference))
     assert (tx.debit_account_code, tx.credit_account_code) == ("1.1.05.15", "1.1.01.15")
-    assert tx.description == "Belanja Modal Awal - Beras"
+    assert tx.description == "Belanja Modal Awal - [KRS.MA-1] Beras - 10 kg"
     purchase = await session.scalar(select(Purchase).where(Purchase.stock_card_id == card.id))
     assert purchase.vendor_id is None and purchase.status == "paid"
     assert await svc.list_purchases() == []

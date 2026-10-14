@@ -123,6 +123,7 @@ def parse_operation(message):
         allowed = {
             "imbal": {"mitra", "tanggal", "bulan", "tahun", "nominal"},
             "masuk": {"produk", "qty", "harga", "pemasok", "tanggal"},
+            "modal": {"produk", "qty", "harga", "tanggal"},
             "keluar": {"produk", "qty", "harga", "customer", "tanggal"},
             "rusak": {"produk", "qty", "tanggal"},
         }
@@ -134,6 +135,7 @@ def parse_operation(message):
     except (ValueError, IndexError):
         raise HTTPException(422, "Gunakan format lengkap: imbal mitra=ID tanggal=YYYY-MM-DD bulan=1 tahun=2026 nominal=100; "
                             "masuk produk=SKU qty=1 harga=100 pemasok=ID tanggal=YYYY-MM-DD; "
+                            "modal produk=SKU qty=1 harga=100 tanggal=YYYY-MM-DD; "
                             "keluar produk=SKU qty=1 harga=150 customer=ID tanggal=YYYY-MM-DD; "
                             "rusak produk=SKU qty=1 tanggal=YYYY-MM-DD") from None
 
@@ -194,7 +196,7 @@ async def prepare(session, user, unit, data):
         qty = int(data["qty"])
         if qty <= 0 or qty > 100000000:
             raise HTTPException(422, "Qty harus positif dan dalam batas")
-        if action != "masuk" and qty > product.qty_on_hand:
+        if action not in {"masuk", "modal"} and qty > product.qty_on_hand:
             raise HTTPException(422, "Stok tidak cukup")
         payload["product_id"] = product.id
         label = product.name
@@ -202,7 +204,15 @@ async def prepare(session, user, unit, data):
                                   code=f"1.1.05.1{unit.code[-1]}" if unit.code in {"UU05", "UU06"} else None)
         # Canonical unit suffixes are 15/16, while new units use their own unambiguous COA.
         payload["inventory"] = inventory.code
-        if action in {"masuk", "keluar"}:
+        if action == "modal":
+            # Belanja Modal Awal: kunci Debit Persediaan / Kredit Kas UU05.
+            if unit.code != "UU05":
+                raise HTTPException(403, "Belanja Modal Awal hanya untuk UU05")
+            price = money(data["harga"])
+            cash = await account(session, unit, code="1.1.01.15", subcategory="kas_bank")
+            payload["cash"] = cash.code
+            rows.append({"debit": inventory.code, "kredit": cash.code, "amount": str((price * qty).quantize(Decimal('.01')))})
+        elif action in {"masuk", "keluar"}:
             price = money(data["harga"])
             cash = await account(session, unit, subcategory="kas_bank",
                                  code=f"1.1.01.1{unit.code[-1]}" if unit.code in {"UU05", "UU06"} else None)
@@ -304,6 +314,10 @@ async def execute(draft_id: str, user: User = Depends(require_roles(*WRITE_LEVEL
             if action == "masuk":
                 await service.stock_in(**common, quantity=qty, unit_cost=money(payload["harga"]), movement_date=when,
                                        vendor_id=payload["pemasok"], debit_account_code=payload["inventory"], credit_account_code=payload["cash"])
+            elif action == "modal":
+                await service.stock_in(**common, quantity=qty, unit_cost=money(payload["harga"]), movement_date=when,
+                                       vendor_id=None, payment_method="modal_awal",
+                                       debit_account_code=payload["inventory"], credit_account_code=payload["cash"])
             elif action == "keluar":
                 await service.stock_out(**common, quantity=qty, sell_price=money(payload["harga"]), movement_date=when,
                     customer_id=payload["customer"], debit_account_code=payload["hpp"], credit_account_code=payload["inventory"],

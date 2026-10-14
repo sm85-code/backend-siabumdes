@@ -202,3 +202,36 @@ async def test_cancel_movement_reverses_internal_use_cleanly(session):
         select(func.count()).select_from(Transaction).where(Transaction.unit_usaha_id == ctx["unit"].id)
     )
     assert tx_count == 0
+
+
+@pytest.mark.asyncio
+async def test_belanja_modal_awal_debits_inventory_credits_cash_without_vendor(session):
+    unit = UnitUsaha(id=str(uuid.uuid4()), code="UU05", name="Toko")
+    session.add(unit)
+    await session.flush()
+    for code, name, sub in [("1.1.05.15", "Persediaan", "aset_lancar"), ("1.1.01.15", "Kas UU05", "kas_bank")]:
+        session.add(Account(id=str(uuid.uuid4()), code=code, name=name, category="aset", subcategory=sub,
+                            normal_balance="debit", group_code="UU05"))
+    cat = StockCategory(id=str(uuid.uuid4()), code="UMUM-MA", name="Umum", unit_usaha_id=unit.id)
+    session.add(cat)
+    await session.flush()
+    product = Product(id=str(uuid.uuid4()), unit_usaha_id=unit.id, sku="KRS.MA-1", name="Beras",
+                      category_id=cat.id, qty_on_hand=0, cost_price=Decimal("0"), sell_price=Decimal("0"))
+    session.add(product)
+    await session.flush()
+
+    svc = InventoryService(session)
+    card = await svc.stock_in(
+        product_id=product.id, quantity=10, unit_cost=Decimal("5000"), movement_date=date(2026, 10, 14),
+        unit_usaha_id=unit.id, debit_account_code="x", credit_account_code="3.1.01.51",
+        vendor_id=None, payment_method="modal_awal",
+    )
+    await session.flush()
+    await session.refresh(product)
+    assert product.qty_on_hand == 10
+    tx = await session.scalar(select(Transaction).where(Transaction.reference == card.reference))
+    assert (tx.debit_account_code, tx.credit_account_code) == ("1.1.05.15", "1.1.01.15")
+    assert tx.description == "Belanja Modal Awal - Beras"
+    purchase = await session.scalar(select(Purchase).where(Purchase.stock_card_id == card.id))
+    assert purchase.vendor_id is None and purchase.status == "paid"
+    assert await svc.list_purchases() == []

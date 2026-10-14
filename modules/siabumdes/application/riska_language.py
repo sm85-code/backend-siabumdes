@@ -14,6 +14,7 @@ NAMED_DATE = r'\b(\d{1,2})\s*(' + '|'.join(sorted(MONTH_ALIASES, key=len, revers
 FIELDS = {
     'imbal': ['mitra', 'tanggal', 'bulan', 'tahun', 'nominal'],
     'masuk': ['produk', 'qty', 'harga', 'pemasok', 'tanggal'],
+    'modal': ['produk', 'qty', 'harga', 'tanggal'],
     'keluar': ['produk', 'qty', 'harga', 'customer', 'tanggal'],
     'rusak': ['produk', 'qty', 'tanggal'],
 }
@@ -46,7 +47,8 @@ def intent(message):
                             ('transfer', r'\btransfer bagi hasil\b')]:
         if re.search(pattern, text):
             return action
-    for action, pattern in [('masuk', r'\b(?:barang|stok|stock) masuk\b|^masuk\b'),
+    for action, pattern in [('modal', r'\bbelanja modal(?: awal)?\b'),
+                            ('masuk', r'\b(?:barang|stok|stock) masuk\b|^masuk\b'),
                             ('keluar', r'\b(?:barang|stok|stock) keluar\b|^keluar\b|\bjual barang\b'),
                             ('rusak', r'\b(?:barang|stok) rusak\b|^rusak\b'),
                             ('imbal', r'^imbal\s+\w+=|\b(?:input|catat|setoran|bayar|pembayaran|terima)\b.*\bimbal hasil\b')]:

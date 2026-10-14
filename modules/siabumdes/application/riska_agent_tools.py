@@ -67,7 +67,7 @@ class Crud(Entity):
 
 
 class Operation(Entity):
-    action: Literal['masuk', 'keluar', 'rusak', 'imbal']
+    action: Literal['masuk', 'modal', 'keluar', 'rusak', 'imbal']
     fields: dict[str, str] = Field(max_length=12, description='Field sesuai formulir_operasional pada konteks.')
 
 
@@ -86,7 +86,7 @@ TOOLS = {
     'baca_laporan': (Report, 'Baca dan bandingkan laba rugi atau saldo kas resmi. Periode memakai tanggal, tahun, atau jumlah bulan terakhir. Semua angka dihitung backend.'),
     'referensi_transaksi': (Entity, 'Baca akun aktif dan jenis transaksi resmi pada satu entitas; jangan mengarang pasangan akun.'),
     'data_resmi': (Crud, 'Baca daftar/cari data atau siapkan draf tambah/ubah/hapus melalui validasi resmi. Tidak mengeksekusi. fields mengikuti formulir pada konteks.'),
-    'draf_operasional': (Operation, 'Siapkan draf stok masuk/keluar/rusak atau setoran imbal hasil. Tidak mengeksekusi.'),
+    'draf_operasional': (Operation, 'Siapkan draf stok masuk/keluar/rusak, Belanja Modal Awal (modal: tanpa pemasok, Debit Persediaan/Kredit Kas UU05), atau setoran imbal hasil. Tidak mengeksekusi.'),
     'draf_penugasan': (Assignment, 'Admin saja: siapkan draf aktifkan/akhiri bantuan Riska bagi pengguna. Tidak memberi hak Admin; tetap membutuhkan konfirmasi.'),
     'draf_strategis': (Strategic, 'Admin saja: draf tutup buku/kunci periode/transfer bagi hasil satu entitas, satu bulan. Tidak mengeksekusi.'),
 }

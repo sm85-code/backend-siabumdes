@@ -21,7 +21,11 @@ from modules.siabumdes.inventory.infrastructure.models import (
     Customer,
 )
 
-_PURCHASE_METHODS = {"cash", "credit"}
+_PURCHASE_METHODS = {"cash", "credit", "modal_awal"}
+# Belanja Modal Awal: modal sudah dicatat (Debit Kas / Kredit Modal), jadi
+# pembelian dari modal itu mengkredit Kas, bukan Modal lagi.
+MODAL_AWAL = "modal_awal"
+_MODAL_AWAL_ACCOUNTS = ("1.1.05.15", "1.1.01.15")
 _SALE_METHODS = {"cash", "piutang"}
 
 
@@ -71,7 +75,7 @@ class InventoryStockMixin:
         unit_usaha_id: str,
         debit_account_code: str,
         credit_account_code: str,
-        vendor_id: str,
+        vendor_id: Optional[str],
         invoice_number: str = "",
         payment_method: str = "cash",
         due_date: Optional[date] = None,
@@ -83,9 +87,13 @@ class InventoryStockMixin:
             raise ValueError("metode pembayaran pembelian tidak valid")
         if payment_method == "credit" and not due_date:
             raise ValueError("tanggal jatuh tempo wajib diisi untuk pembelian kredit")
+        modal_awal = payment_method == MODAL_AWAL
+        if modal_awal:
+            debit_account_code, credit_account_code = _MODAL_AWAL_ACCOUNTS
+            due_date = None
         product = await self._get_product_for_update(product_id)
-        vendor = await self.session.get(Vendor, vendor_id)
-        if not vendor:
+        vendor = await self.session.get(Vendor, vendor_id) if vendor_id else None
+        if not vendor and not (modal_awal and not vendor_id):
             raise ValueError("vendor tidak ditemukan")
         total = (unit_cost * quantity).quantize(Decimal("0.01"))
         card = StockCard(
@@ -110,7 +118,10 @@ class InventoryStockMixin:
             amount=total,
             debit_account_code=debit_account_code,
             credit_account_code=credit_account_code,
-            description=inventory_description("Pembelian Stok", partner=vendor.name, invoice=invoice_number, product=product.name, quantity=quantity),
+            description=(
+                f"Belanja Modal Awal - {product.name}" if modal_awal else
+                inventory_description("Pembelian Stok", partner=vendor.name, invoice=invoice_number, product=product.name, quantity=quantity)
+            ),
             reference=card.reference,
             created_by=created_by,
             transaction_type="inventory_purchase",
@@ -123,7 +134,7 @@ class InventoryStockMixin:
             payment_method=payment_method,
             total_amount=total,
             due_date=due_date if payment_method == "credit" else None,
-            status="paid" if payment_method == "cash" else "unpaid",
+            status="unpaid" if payment_method == "credit" else "paid",
         )
         self.session.add(purchase)
         await self.session.flush()

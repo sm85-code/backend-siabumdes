@@ -58,6 +58,9 @@ _POST_DDL = [
     ("DROP INDEX IF EXISTS uq_yield_payment_period_week", "drop index uq_yield_payment_period_week"),
     ("CREATE UNIQUE INDEX IF NOT EXISTS uq_yield_payment_period ON yield_payments (partner_id, year, month)",
      "restore unique uq_yield_payment_period"),
+    # Belanja Modal Awal: pemasok opsional.
+    ("ALTER TABLE inventory_purchases ALTER COLUMN vendor_id DROP NOT NULL",
+     "allow inventory_purchases.vendor_id NULL"),
 ]
 
 

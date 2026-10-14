@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from modules.siabumdes.adapters.api.deps import require_roles
-from modules.siabumdes.adapters.api.scope import assert_unit_active
+from modules.siabumdes.adapters.api.scope import assert_can_mutate_period, assert_unit_active
 from modules.siabumdes.identity.infrastructure.models import User
 from modules.siabumdes.infrastructure.models import UnitUsaha
 from modules.siabumdes.inventory.application.services import (
@@ -77,7 +77,7 @@ class StockInBody(BaseModel):
     unit_usaha_id: Optional[str] = None
     debit_account_code: str
     credit_account_code: str
-    vendor_id: str
+    vendor_id: Optional[str] = None
     invoice_number: str = ""
     payment_method: str = "cash"
     due_date: Optional[date] = None
@@ -367,6 +367,7 @@ async def stock_in(
     svc = InventoryService(session)
     try:
         uid = await resolve_unit_id(session, body.unit_usaha_id, user)
+        await assert_can_mutate_period(session, user, body.movement_date, uid)
         card = await svc.stock_in(
             product_id=body.product_id,
             quantity=body.quantity,

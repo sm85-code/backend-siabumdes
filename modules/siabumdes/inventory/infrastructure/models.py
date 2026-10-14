@@ -175,11 +175,12 @@ class Purchase(Base):
     stock_card_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("stock_cards.id", ondelete="CASCADE"), nullable=False
     )
-    vendor_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("inventory_vendors.id", ondelete="RESTRICT"), nullable=False
+    # NULL hanya untuk Belanja Modal Awal (pemasok opsional).
+    vendor_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("inventory_vendors.id", ondelete="RESTRICT"), nullable=True
     )
     invoice_number: Mapped[str] = mapped_column(String(128), nullable=False, default="")
-    payment_method: Mapped[str] = mapped_column(String(16), nullable=False)  # cash | credit
+    payment_method: Mapped[str] = mapped_column(String(16), nullable=False)  # cash | credit | modal_awal
     total_amount: Mapped[Decimal] = mapped_column(Numeric(20, 2), nullable=False, default=Decimal("0.00"))
     due_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="unpaid")  # unpaid|partial|paid

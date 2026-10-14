@@ -38,6 +38,8 @@ async def trade_rows(session, kind, unit_id, partner_id=None, start=None, end=No
         .options(selectinload(model.payments))
         .order_by(StockCard.movement_date, model.id)
     )
+    if model is Purchase:
+        stmt = stmt.where(Purchase.payment_method != "modal_awal")
     if lock:
         stmt = stmt.with_for_update(of=StockCard)
     if partner_id:

@@ -146,6 +146,7 @@ class InventoryTradeMixin:
         stmt = (
             select(Purchase)
             .options(selectinload(Purchase.vendor), selectinload(Purchase.payments))
+            .where(Purchase.payment_method != "modal_awal")
             .order_by(Purchase.created_at.desc())
             .limit(min(limit, 500))
         )

@@ -150,7 +150,7 @@ class InventoryCatalogMixin:
 
     async def product_has_history(self, product_id: str) -> bool:
         return bool(
-            await self.session.scalar(select(StockCard.id).where(StockCard.product_id == product_id).limit(1))
+            await self.session.scalar(select(StockCard.id).where(StockCard.product_id == product_id, StockCard.finance_status != "cancelled").limit(1))
             or await self.session.scalar(select(StockAdjustment.id).where(StockAdjustment.product_id == product_id).limit(1))
         )
 
@@ -205,7 +205,7 @@ class InventoryCatalogMixin:
         ids = [p.id for p in rows]
         history: set[str] = set()
         if ids:
-            history = set((await self.session.scalars(select(StockCard.product_id).where(StockCard.product_id.in_(ids)))).all())
+            history = set((await self.session.scalars(select(StockCard.product_id).where(StockCard.product_id.in_(ids), StockCard.finance_status != "cancelled"))).all())
             history |= set((await self.session.scalars(select(StockAdjustment.product_id).where(StockAdjustment.product_id.in_(ids)))).all())
         return [{**self._product_dict(p), "has_history": p.id in history} for p in rows]
 

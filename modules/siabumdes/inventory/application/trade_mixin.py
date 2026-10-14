@@ -35,7 +35,7 @@ def _partner_dict(row: Vendor | Customer) -> dict[str, Any]:
     }
 
 
-def _purchase_dict(p: Purchase) -> dict[str, Any]:
+def _purchase_dict(p: Purchase, movement_date: Optional[date] = None) -> dict[str, Any]:
     paid = sum((pay.amount for pay in p.payments), Decimal("0.00"))
     return {
         "id": p.id,
@@ -50,10 +50,11 @@ def _purchase_dict(p: Purchase) -> dict[str, Any]:
         "due_date": p.due_date.isoformat() if p.due_date else None,
         "status": p.status,
         "created_at": p.created_at.isoformat() if p.created_at else None,
+        "transaction_date": movement_date.isoformat() if movement_date else None,
     }
 
 
-def _sale_dict(s: Sale) -> dict[str, Any]:
+def _sale_dict(s: Sale, movement_date: Optional[date] = None) -> dict[str, Any]:
     paid = sum((pay.amount for pay in s.payments), Decimal("0.00"))
     return {
         "id": s.id,
@@ -69,6 +70,7 @@ def _sale_dict(s: Sale) -> dict[str, Any]:
         "due_date": s.due_date.isoformat() if s.due_date else None,
         "status": s.status,
         "created_at": s.created_at.isoformat() if s.created_at else None,
+        "transaction_date": movement_date.isoformat() if movement_date else None,
     }
 
 
@@ -152,8 +154,9 @@ class InventoryTradeMixin:
         )
         if status:
             stmt = stmt.where(Purchase.status == status)
-        rows = (await self.session.scalars(stmt)).all()
-        return [_purchase_dict(p) for p in rows]
+        stmt = stmt.add_columns(StockCard.movement_date).outerjoin(StockCard, StockCard.id == Purchase.stock_card_id)
+        rows = (await self.session.execute(stmt)).all()
+        return [_purchase_dict(p, d) for p, d in rows]
 
     async def pay_purchase(
         self, *, purchase_id: str, amount: Decimal, paid_date: date,
@@ -217,8 +220,9 @@ class InventoryTradeMixin:
         )
         if status:
             stmt = stmt.where(Sale.status == status)
-        rows = (await self.session.scalars(stmt)).all()
-        return [_sale_dict(s) for s in rows]
+        stmt = stmt.add_columns(StockCard.movement_date).outerjoin(StockCard, StockCard.id == Sale.stock_card_id)
+        rows = (await self.session.execute(stmt)).all()
+        return [_sale_dict(s, d) for s, d in rows]
 
     async def pay_sale(
         self, *, sale_id: str, amount: Decimal, paid_date: date,

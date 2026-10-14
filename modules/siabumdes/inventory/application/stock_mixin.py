@@ -8,7 +8,7 @@ from typing import Any, Optional
 from sqlalchemy import select, update
 from sqlalchemy.orm import selectinload
 
-from modules.siabumdes.inventory.application.descriptions import inventory_description
+from modules.siabumdes.inventory.application.descriptions import belanja_modal_awal_description, inventory_description
 from modules.siabumdes.inventory.application.coa import validate_coa_codes
 from modules.siabumdes.inventory.infrastructure.models import (
     CommercialDocument,
@@ -119,7 +119,12 @@ class InventoryStockMixin:
             debit_account_code=debit_account_code,
             credit_account_code=credit_account_code,
             description=(
-                f"Belanja Modal Awal - {product.name}" if modal_awal else
+                belanja_modal_awal_description(
+                    sku=product.sku,
+                    name=product.name,
+                    quantity=quantity,
+                    unit=product.unit_of_measure,
+                ) if modal_awal else
                 inventory_description("Pembelian Stok", partner=vendor.name, invoice=invoice_number, product=product.name, quantity=quantity)
             ),
             reference=card.reference,

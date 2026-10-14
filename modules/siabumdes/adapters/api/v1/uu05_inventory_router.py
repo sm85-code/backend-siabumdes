@@ -19,10 +19,46 @@ from modules.siabumdes.inventory.application.services import (
     INVENTORY_BUSINESS_TYPES,
     UU05_CODE,
 )
+from modules.siabumdes.inventory.infrastructure.models import (
+    Product,
+    Purchase,
+    PurchasePayment,
+    Sale,
+    SalePayment,
+    StockAdjustment,
+    StockCard,
+)
 from shared.config import public_role
 from shared.database import get_db
 
 router = APIRouter(prefix="/api/v1/uu05_inventory", tags=["uu05_inventory"])
+
+
+async def _assert_card_periods(session: AsyncSession, user: User, stock_card_id: str) -> None:
+    """Pembatalan stok menghapus jurnal di tanggal asli pergerakan + pelunasannya:
+    semua tanggal itu harus berada di periode yang masih terbuka."""
+    card = await session.get(StockCard, stock_card_id)
+    if not card:
+        return
+    product = await session.get(Product, card.product_id)
+    uid = product.unit_usaha_id if product else None
+    dates = {card.movement_date}
+    dates.update(await session.scalars(
+        select(PurchasePayment.paid_date).join(Purchase, PurchasePayment.purchase_id == Purchase.id)
+        .where(Purchase.stock_card_id == card.id)))
+    dates.update(await session.scalars(
+        select(SalePayment.paid_date).join(Sale, SalePayment.sale_id == Sale.id)
+        .where(Sale.stock_card_id == card.id)))
+    for d in sorted(dates):
+        await assert_can_mutate_period(session, user, d, uid)
+
+
+async def _assert_adjustment_period(session: AsyncSession, user: User, adjustment_id: str) -> None:
+    row = await session.get(StockAdjustment, adjustment_id)
+    if not row:
+        return
+    product = await session.get(Product, row.product_id)
+    await assert_can_mutate_period(session, user, row.adjustment_date, product.unit_usaha_id if product else None)
 
 INVENTORY_ROLES = ("admin", "direktur", "bendahara", "pengelola")
 
@@ -396,6 +432,7 @@ async def stock_out_internal(
     svc = InventoryService(session)
     try:
         uid = await resolve_unit_id(session, body.unit_usaha_id, user)
+        await assert_can_mutate_period(session, user, body.movement_date, uid)
         card = await svc.stock_out_internal(
             product_id=body.product_id,
             quantity=body.quantity,
@@ -420,6 +457,7 @@ async def stock_out(
     svc = InventoryService(session)
     try:
         uid = await resolve_unit_id(session, body.unit_usaha_id, user)
+        await assert_can_mutate_period(session, user, body.movement_date, uid)
         card = await svc.stock_out(
             product_id=body.product_id,
             quantity=body.quantity,
@@ -444,9 +482,10 @@ async def stock_out(
 @router.post("/cancel-movement")
 async def cancel_movement(
     body: CancelBody,
-    _: User = Depends(require_active_inventory_writer),
+    user: User = Depends(require_active_inventory_writer),
     session: AsyncSession = Depends(get_db),
 ):
+    await _assert_card_periods(session, user, body.stock_card_id)
     await InventoryService(session).cancel_movement(body.stock_card_id)
     return {"cancelled": body.stock_card_id}
 
@@ -468,9 +507,10 @@ async def list_movements(
 @router.post("/cancel-adjustment")
 async def cancel_adjustment(
     body: CancelAdjustBody,
-    _: User = Depends(require_active_inventory_writer),
+    user: User = Depends(require_active_inventory_writer),
     session: AsyncSession = Depends(get_db),
 ):
+    await _assert_adjustment_period(session, user, body.adjustment_id)
     await InventoryService(session).cancel_adjustment(body.adjustment_id)
     return {"cancelled": body.adjustment_id}
 
@@ -492,6 +532,7 @@ async def create_adjustment(
 ):
     try:
         uid = await resolve_unit_id(session, body.unit_usaha_id, user)
+        await assert_can_mutate_period(session, user, body.adjustment_date, uid)
         return await InventoryService(session).adjust_stock(
             product_id=body.product_id,
             quantity_delta=body.quantity_delta,
@@ -623,6 +664,7 @@ async def pay_purchase(
 ):
     try:
         uid = await resolve_unit_id(session, body.unit_usaha_id, user)
+        await assert_can_mutate_period(session, user, body.paid_date, uid)
         return await InventoryService(session).pay_purchase(
             purchase_id=body.purchase_id,
             amount=body.amount,
@@ -654,6 +696,7 @@ async def pay_sale(
 ):
     try:
         uid = await resolve_unit_id(session, body.unit_usaha_id, user)
+        await assert_can_mutate_period(session, user, body.paid_date, uid)
         return await InventoryService(session).pay_sale(
             sale_id=body.sale_id,
             amount=body.amount,

@@ -494,12 +494,15 @@ async def cancel_movement(
 async def list_movements(
     product_id: Optional[str] = None,
     direction: Optional[str] = None,
-    limit: int = Query(100, ge=1, le=500),
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    limit: int = Query(100, ge=1, le=2000),
     _: User = Depends(require_inventory_user),
     session: AsyncSession = Depends(get_db),
 ):
     return await InventoryService(session).list_movements(
-        product_id=product_id, direction=direction, limit=limit
+        product_id=product_id, direction=direction, limit=limit,
+        date_from=date_from, date_to=date_to,
     )
 
 
@@ -517,11 +520,15 @@ async def cancel_adjustment(
 
 @router.get("/adjustments")
 async def list_adjustments(
-    limit: int = Query(100, ge=1, le=500),
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    limit: int = Query(100, ge=1, le=2000),
     _: User = Depends(require_inventory_user),
     session: AsyncSession = Depends(get_db),
 ):
-    return await InventoryService(session).list_adjustments(limit=limit)
+    return await InventoryService(session).list_adjustments(
+        limit=limit, date_from=date_from, date_to=date_to
+    )
 
 
 @router.post("/adjustments")

@@ -364,13 +364,19 @@ class InventoryStockMixin:
         product_id: Optional[str] = None,
         direction: Optional[str] = None,
         limit: int = 100,
+        date_from: Optional[date] = None,
+        date_to: Optional[date] = None,
     ) -> list[dict[str, Any]]:
         stmt = (
             select(StockCard)
             .options(selectinload(StockCard.product).selectinload(Product.category))
             .order_by(StockCard.movement_date.desc(), StockCard.created_at.desc())
-            .limit(min(limit, 500))
+            .limit(min(limit, 2000))
         )
+        if date_from:
+            stmt = stmt.where(StockCard.movement_date >= date_from)
+        if date_to:
+            stmt = stmt.where(StockCard.movement_date <= date_to)
         if product_id:
             stmt = stmt.where(StockCard.product_id == product_id)
         if direction in {"in", "out"}:

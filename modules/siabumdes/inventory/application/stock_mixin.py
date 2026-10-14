@@ -55,6 +55,12 @@ def stock_in_price_error(product: Product, unit_cost: Decimal) -> Optional[str]:
     return None
 
 
+def _line_error(index: int, product: Optional[Product], exc: Exception) -> str:
+    """Pesan error nota multi-baris, contoh: 'Baris 2 [KRS.MM-OYK]: insufficient stock'."""
+    sku = f" [{product.sku}]" if product is not None and getattr(product, "sku", None) else ""
+    return f"Baris {index}{sku}: {exc}"
+
+
 class InventoryStockMixin:
 
     async def _get_product_for_update(self, product_id: str) -> Product:
@@ -143,6 +149,7 @@ class InventoryStockMixin:
         for i, line in enumerate(lines, start=1):
             quantity = int(line["quantity"])
             unit_cost = Decimal(line["unit_cost"])
+            product = None
             try:
                 if quantity <= 0:
                     raise ValueError("quantity must be > 0")
@@ -153,7 +160,7 @@ class InventoryStockMixin:
             except ValueError as exc:
                 if not multi:
                     raise
-                raise type(exc)(f"Baris {i} ({line.get('product_id')}): {exc}") from exc
+                raise type(exc)(_line_error(i, product, exc)) from exc
             line_total = (unit_cost * quantity).quantize(Decimal("0.01"))
             total += line_total
             card = StockCard(
@@ -255,6 +262,7 @@ class InventoryStockMixin:
         for i, line in enumerate(lines, start=1):
             quantity = int(line["quantity"])
             sell_price = Decimal(line["sell_price"])
+            product = None
             try:
                 if quantity <= 0:
                     raise ValueError("quantity must be > 0")
@@ -268,7 +276,7 @@ class InventoryStockMixin:
             except ValueError as exc:
                 if not multi:
                     raise
-                raise ValueError(f"Baris {i} ({line.get('product_id')}): {exc}") from exc
+                raise ValueError(_line_error(i, product, exc)) from exc
             line_total = (unit_cost * quantity).quantize(Decimal("0.01"))
             total += line_total
             revenue_total += (sell_price * quantity).quantize(Decimal("0.01"))

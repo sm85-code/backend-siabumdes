@@ -61,7 +61,7 @@ async def test_nota_satu_jurnal_satu_purchase():
 @pytest.mark.asyncio
 async def test_baris_harga_beda_ditolak_dengan_nomor_baris():
     svc, _ = _svc([_p("oyek", 0, "0"), _p("gula", 5, "6000")])
-    with pytest.raises(HppMismatchError, match="^Baris 2"):
+    with pytest.raises(HppMismatchError, match=r"^Baris 2 \[GULA\]"):
         await svc.stock_in_nota(lines=[
             {"product_id": "oyek", "quantity": 10, "unit_cost": Decimal("5000")},
             {"product_id": "gula", "quantity": 2, "unit_cost": Decimal("7000")},

@@ -506,10 +506,10 @@ class InventoryStockMixin:
         stmt = stmt.where(StockCard.finance_status != "cancelled")
         rows = (await self.session.scalars(stmt)).all()
         heads = {c.nota_id or c.id for c in rows}
-        invoices = dict((await self.session.execute(
-            select(Purchase.stock_card_id, Purchase.invoice_number).where(Purchase.stock_card_id.in_(heads))
-            .union_all(select(Sale.stock_card_id, Sale.invoice_number).where(Sale.stock_card_id.in_(heads)))
-        )).all()) if heads else {}
+        docs = {r[0]: (r[1], r[2]) for r in (await self.session.execute(
+            select(Purchase.stock_card_id, Purchase.invoice_number, Purchase.payment_method).where(Purchase.stock_card_id.in_(heads))
+            .union_all(select(Sale.stock_card_id, Sale.invoice_number, Sale.payment_method).where(Sale.stock_card_id.in_(heads)))
+        )).all()} if heads else {}
         return [
             {
                 "id": c.id,
@@ -525,7 +525,8 @@ class InventoryStockMixin:
                 "reference": c.reference,
                 "finance_status": c.finance_status,
                 "nota_id": c.nota_id or c.id,
-                "invoice_number": invoices.get(c.nota_id or c.id) or "",
+                "invoice_number": (docs.get(c.nota_id or c.id) or ("", ""))[0] or "",
+                "payment_method": (docs.get(c.nota_id or c.id) or ("", ""))[1] or "",
             }
             for c in rows
         ]

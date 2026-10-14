@@ -433,8 +433,9 @@ async def validate(session, user, state, unit, existing):
                 raise ValueError('Data transaksi tidak dapat dihapus karena sudah memiliki nominal di tab Transaksi. Hapus seluruh isian nominalnya terlebih dahulu')
         else:
             (toko.ItemCreateBody if action == 'create' else toko.ItemUpdateBody)(**data)
-            if existing and await session.scalar(select(TokoEntry.id).where(TokoEntry.item_id == existing.id).limit(1)):
-                # Ganti nama/jenis menyinkronkan transaksi UU05 terkait -> cek periode semuanya.
+            if existing and data.get('jenis') not in (None, existing.jenis) and await session.scalar(select(TokoEntry.id).where(TokoEntry.item_id == existing.id).limit(1)):
+                # Ganti jenis mengubah akun jurnal -> cek periode semuanya. Ganti nama saja
+                # melewati isian di periode tutup buku (ditangani toko.update_item).
                 for entry in (await session.scalars(select(TokoEntry).where(TokoEntry.item_id == existing.id))).all():
                     await assert_can_mutate_period(session, user, entry.tanggal, unit.id)
     if resource == 'isian':

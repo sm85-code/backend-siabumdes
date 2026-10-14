@@ -17,14 +17,14 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from modules.siabumdes.adapters.api.deps import require_roles
-from modules.siabumdes.adapters.api.scope import assert_unit_active
+from modules.siabumdes.adapters.api.scope import assert_can_mutate_period, assert_unit_active
 from modules.siabumdes.application.toko_transactions import (
     apply_entry_transaction,
     delete_entry_transaction,
     toko_unit,
 )
 from modules.siabumdes.identity.infrastructure.models import User
-from modules.siabumdes.infrastructure.models import UnitUsaha
+from modules.siabumdes.infrastructure.models import Transaction, UnitUsaha
 from modules.siabumdes.toko.infrastructure.models import TokoEntry, TokoItem
 from shared.config import public_role
 from shared.database import get_db
@@ -160,6 +160,7 @@ async def update_item(
     item = await session.get(TokoItem, item_id)
     if not item:
         raise HTTPException(status_code=404, detail="Data transaksi tidak ditemukan")
+    old_name, old_jenis = item.name, item.jenis
     if body.name is not None:
         item.name = body.name.strip()
     if body.jenis is not None:
@@ -168,12 +169,24 @@ async def update_item(
         item.keterangan = body.keterangan
     if body.position is not None:
         item.position = body.position
-    if body.name is not None or body.jenis is not None:
+    jenis_changed = body.jenis is not None and body.jenis != old_jenis
+    if (body.name is not None and item.name != old_name) or jenis_changed:
         # Nama/jenis berubah -> keterangan & jenis transaksi UU05 terkait ikut diperbarui.
+        # Ganti jenis mengubah akun jurnal: ditolak bila ada isian di periode tutup buku.
+        # Ganti nama saja: isian di periode tutup buku/dikunci dilewati (sama seperti ganti nama mitra).
         entries = (await session.execute(select(TokoEntry).where(TokoEntry.item_id == item.id))).scalars().all()
         if entries:
             unit = await toko_unit(session)
             for entry in entries:
+                if not jenis_changed:
+                    try:
+                        await assert_can_mutate_period(session, user, entry.tanggal, unit.id)
+                        if entry.transaction_id:
+                            tx = await session.get(Transaction, entry.transaction_id)
+                            if tx:
+                                await assert_can_mutate_period(session, user, tx.date, unit.id)
+                    except HTTPException:
+                        continue
                 await apply_entry_transaction(session, user, unit, entry, item)
     await session.flush()
     has = bool(await session.scalar(select(func.count(TokoEntry.id)).where(TokoEntry.item_id == item.id)))

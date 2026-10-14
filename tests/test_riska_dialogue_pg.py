@@ -49,7 +49,7 @@ async def context():
             session.add(RiskaAssignment(user_id=manager.id, session_id='manager-session', assigned_by=admin.id,
                 role='pengelola', unit_usaha_id=toko.id, active=True))
             product = Product(sku='SKU-012', name='Daster Arab Jumbo', category_id=category.id, unit_usaha_id=toko.id,
-                              cost_price=Decimal('10000'), qty_on_hand=10)
+                              cost_price=Decimal('20000'), qty_on_hand=10)
             session.add(product)
             for unit in [toko, air]:
                 suffix = unit.code[-1]

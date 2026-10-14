@@ -39,10 +39,10 @@ class InventoryAdjustReportsMixin:
         loss_account_code: str = BEBAN_KERUGIAN_BARANG_ACCOUNT_CODE,
     ) -> dict[str, Any]:
         if quantity_delta == 0:
-            raise ValueError("quantity_delta tidak boleh 0")
+            raise ValueError("selisih jumlah tidak boleh 0")
         reason_clean = (reason or "").strip().lower()
         if reason_clean not in {"rusak", "kadaluarsa", "koreksi"}:
-            raise ValueError("reason harus rusak, kadaluarsa, atau koreksi")
+            raise ValueError("alasan harus rusak, kadaluarsa, atau koreksi")
         product = await self.session.get(Product, product_id)
         if not product:
             raise ValueError("produk tidak ditemukan")
@@ -58,8 +58,8 @@ class InventoryAdjustReportsMixin:
         if amount > 0 and not is_loss:
             if not (debit_account_code or "").strip() or not (credit_account_code or "").strip():
                 raise ValueError(
-                    "debit_account_code dan credit_account_code wajib diisi "
-                    "ketika penyesuaian berdampak nilai (HPP x |delta| > 0)"
+                    "akun debit dan akun kredit wajib diisi "
+                    "ketika penyesuaian berdampak nilai (HPP × |selisih| > 0)"
                 )
             await validate_coa_codes(self.session, debit_account_code, credit_account_code)
         elif amount > 0 and is_loss:

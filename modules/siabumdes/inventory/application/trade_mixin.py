@@ -83,7 +83,7 @@ class InventoryTradeMixin:
 
     async def create_vendor(self, *, unit_usaha_id: str, name: str, contact: Optional[str], address: Optional[str]) -> dict[str, Any]:
         if not name.strip():
-            raise ValueError("nama vendor wajib diisi")
+            raise ValueError("nama pemasok wajib diisi")
         row = Vendor(unit_usaha_id=unit_usaha_id, name=name.strip(), contact=contact, address=address)
         self.session.add(row)
         await self.session.flush()
@@ -95,7 +95,7 @@ class InventoryTradeMixin:
     ) -> dict[str, Any]:
         row = await self.session.get(Vendor, vendor_id)
         if not row:
-            raise ValueError("vendor tidak ditemukan")
+            raise ValueError("pemasok tidak ditemukan")
         if name is not None:
             row.name = name.strip() or row.name
         if contact is not None:
@@ -117,7 +117,7 @@ class InventoryTradeMixin:
 
     async def create_customer(self, *, unit_usaha_id: str, name: str, contact: Optional[str], address: Optional[str]) -> dict[str, Any]:
         if not name.strip():
-            raise ValueError("nama customer wajib diisi")
+            raise ValueError("nama pelanggan wajib diisi")
         row = Customer(unit_usaha_id=unit_usaha_id, name=name.strip(), contact=contact, address=address)
         self.session.add(row)
         await self.session.flush()
@@ -129,7 +129,7 @@ class InventoryTradeMixin:
     ) -> dict[str, Any]:
         row = await self.session.get(Customer, customer_id)
         if not row:
-            raise ValueError("customer tidak ditemukan")
+            raise ValueError("pelanggan tidak ditemukan")
         if name is not None:
             row.name = name.strip() or row.name
         if contact is not None:

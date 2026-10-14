@@ -56,7 +56,7 @@ def stock_in_price_error(product: Product, unit_cost: Decimal) -> Optional[str]:
 
 
 def _line_error(index: int, product: Optional[Product], exc: Exception) -> str:
-    """Pesan error nota multi-baris, contoh: 'Baris 2 [KRS.MM-OYK]: insufficient stock'."""
+    """Pesan error nota multi-baris, contoh: 'Baris 2 [KRS.MM-OYK]: Stok tidak cukup (tersedia 3, diminta 5)'."""
     sku = f" [{product.sku}]" if product is not None and getattr(product, "sku", None) else ""
     return f"Baris {index}{sku}: {exc}"
 
@@ -73,7 +73,7 @@ class InventoryStockMixin:
             select(Product).where(Product.id == product_id).with_for_update()
         )
         if not product:
-            raise ValueError("product not found")
+            raise ValueError("produk tidak ditemukan")
         return product
 
     async def _decrement_qty_atomic(self, product_id: str, quantity: int) -> Product:
@@ -94,8 +94,10 @@ class InventoryStockMixin:
             return product
         exists = await self.session.get(Product, product_id)
         if not exists:
-            raise ValueError("product not found")
-        raise ValueError("insufficient stock")
+            raise ValueError("produk tidak ditemukan")
+        raise ValueError(
+            f"Stok tidak cukup (tersedia {exists.qty_on_hand}, diminta {quantity})"
+        )
 
     async def stock_in(
         self,
@@ -142,7 +144,7 @@ class InventoryStockMixin:
             due_date = None
         vendor = await self.session.get(Vendor, vendor_id) if vendor_id else None
         if not vendor and not (modal_awal and not vendor_id):
-            raise ValueError("vendor tidak ditemukan")
+            raise ValueError("pemasok tidak ditemukan")
         multi = len(lines) > 1
         cards: list[tuple[StockCard, Product]] = []
         total = Decimal("0.00")
@@ -152,7 +154,7 @@ class InventoryStockMixin:
             product = None
             try:
                 if quantity <= 0:
-                    raise ValueError("quantity must be > 0")
+                    raise ValueError("jumlah harus > 0")
                 product = await self._get_product_for_update(line["product_id"])
                 price_error = stock_in_price_error(product, unit_cost)
                 if price_error:
@@ -254,7 +256,7 @@ class InventoryStockMixin:
             raise ValueError("tanggal jatuh tempo wajib diisi untuk penjualan piutang")
         customer = await self.session.get(Customer, customer_id)
         if not customer:
-            raise ValueError("customer tidak ditemukan")
+            raise ValueError("pelanggan tidak ditemukan")
         multi = len(lines) > 1
         cards: list[tuple[StockCard, Product]] = []
         total = Decimal("0.00")
@@ -265,7 +267,7 @@ class InventoryStockMixin:
             product = None
             try:
                 if quantity <= 0:
-                    raise ValueError("quantity must be > 0")
+                    raise ValueError("jumlah harus > 0")
                 if sell_price < 0:
                     raise ValueError("harga jual tidak boleh negatif")
                 # Lock first so cost_price / existence are stable, then atomic
@@ -365,7 +367,7 @@ class InventoryStockMixin:
         supaya alur penjualan yang sudah teruji tidak ikut berubah.
         """
         if quantity <= 0:
-            raise ValueError("quantity must be > 0")
+            raise ValueError("jumlah harus > 0")
         product = await self._get_product_for_update(product_id)
         unit_cost = product.cost_price
         product = await self._decrement_qty_atomic(product_id, quantity)

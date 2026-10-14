@@ -50,6 +50,7 @@ _ADD_COLUMNS = [
     ("stock_cards", "nota_id", "VARCHAR(36)"),
     ("unit_usaha", "business_type", "VARCHAR(20) NOT NULL DEFAULT 'jasa'"),
     ("toko_entries", "transaction_id", "VARCHAR(64) REFERENCES transactions(id) ON DELETE RESTRICT"),
+    ("stock_cards", "sell_price", "NUMERIC(20,2)"),
 ]
 
 # DDL lanjutan setelah _ADD_COLUMNS (idempoten, tanpa menghapus data).

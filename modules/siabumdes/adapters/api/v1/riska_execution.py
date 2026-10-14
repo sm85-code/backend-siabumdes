@@ -22,6 +22,7 @@ from modules.siabumdes.identity.infrastructure.models import AiSessionPermission
 from modules.siabumdes.infrastructure.models import Account, UnitUsaha, TransactionType
 from modules.siabumdes.inventory.infrastructure.models import Product, Vendor, Customer
 from modules.siabumdes.inventory.application.services import InventoryService
+from modules.siabumdes.inventory.application.stock_mixin import HppMismatchError, stock_in_price_error
 from modules.siabumdes.public_service import SiabumdesPublicService
 
 router = APIRouter(prefix="/api/riska", tags=["riska"])
@@ -198,6 +199,10 @@ async def prepare(session, user, unit, data):
             raise HTTPException(422, "Qty harus positif dan dalam batas")
         if action not in {"masuk", "modal"} and qty > product.qty_on_hand:
             raise HTTPException(422, "Stok tidak cukup")
+        if action in {"masuk", "modal"}:
+            price_error = stock_in_price_error(product, money(data["harga"]))
+            if price_error:
+                raise HTTPException(422, price_error)
         payload["product_id"] = product.id
         label = product.name
         inventory = await account(session, unit, category="aset", subcategory="aset_lancar",
@@ -329,6 +334,8 @@ async def execute(draft_id: str, user: User = Depends(require_roles(*WRITE_LEVEL
         row.consumed = True
         await record_audit(session, actor=user, action="riska_execute", entity="riska_drafts", entity_id=row.id,
                            detail=f"{unit.code}: {payload['action']}")
+    except HppMismatchError as exc:
+        raise HTTPException(422, str(exc)) from None
     except (ValueError, ArithmeticError):
         raise HTTPException(422, "Data operasional tidak valid; periksa COA dan stok") from None
     return await offer_more(session, user, {"message": "Transaksi dan jurnal berhasil dicatat. Ada hal lain yang bisa Riska bantu? ✨", "refresh_required": True})

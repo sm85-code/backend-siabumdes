@@ -29,6 +29,28 @@ _MODAL_AWAL_ACCOUNTS = ("1.1.05.15", "1.1.01.15")
 _SALE_METHODS = {"cash", "piutang"}
 
 
+class HppMismatchError(ValueError):
+    """Stock In price differs from the HPP of a SKU that still has stock."""
+
+
+def _rupiah(value: Decimal) -> str:
+    q = Decimal(value).quantize(Decimal("0.01"))
+    whole = f"{int(q):,}".replace(",", ".")
+    cents = int((q - int(q)) * 100)
+    return f"Rp {whole}" + (f",{cents:02d}" if cents else "")
+
+
+def stock_in_price_error(product: Product, unit_cost: Decimal) -> Optional[str]:
+    """Satu SKU = satu harga beli. Selama SKU masih punya stok, harga beli
+    Stock In wajib sama dengan HPP-nya; harga berbeda harus memakai SKU baru.
+    Stok 0 (belum pernah dipakai atau sudah habis) boleh menetapkan HPP baru.
+    """
+    cost = Decimal(product.cost_price or 0).quantize(Decimal("0.01"))
+    if product.qty_on_hand > 0 and cost > 0 and Decimal(unit_cost).quantize(Decimal("0.01")) != cost:
+        return f"Harga beli berbeda dengan HPP SKU ini ({_rupiah(cost)}). Buat SKU baru untuk harga baru."
+    return None
+
+
 class InventoryStockMixin:
 
     async def _get_product_for_update(self, product_id: str) -> Product:
@@ -92,6 +114,9 @@ class InventoryStockMixin:
             debit_account_code, credit_account_code = _MODAL_AWAL_ACCOUNTS
             due_date = None
         product = await self._get_product_for_update(product_id)
+        price_error = stock_in_price_error(product, unit_cost)
+        if price_error:
+            raise HppMismatchError(price_error)
         vendor = await self.session.get(Vendor, vendor_id) if vendor_id else None
         if not vendor and not (modal_awal and not vendor_id):
             raise ValueError("vendor tidak ditemukan")
@@ -106,8 +131,10 @@ class InventoryStockMixin:
             reference="",
             finance_status="pending",
         )
+        if product.qty_on_hand <= 0 or not product.cost_price:
+            # Stok kosong: tidak ada stok lama yang salah dinilai.
+            product.cost_price = unit_cost
         product.qty_on_hand += quantity
-        product.cost_price = unit_cost
         self.session.add(card)
         await self.session.flush()
         card.reference = f"stock-in:{card.id}"

@@ -12,6 +12,7 @@ from modules.siabumdes.inventory.application.descriptions import inventory_descr
 from modules.siabumdes.inventory.application.coa import validate_coa_codes
 from modules.siabumdes.inventory.infrastructure.models import (
     Product,
+    Purchase,
     StockAdjustment,
     StockCard,
 )
@@ -277,3 +278,47 @@ class InventoryAdjustReportsMixin:
             },
             "net_qty": in_qty - out_qty,
         }
+
+    async def remaining_by_source_report(self) -> dict[str, Any]:
+        """Sisa stok per SKU menurut sumber pembelian (reguler vs Belanja Modal Awal).
+
+        Atribusi FIFO: barang keluar memakai stok masuk terlama dulu, jadi stok
+        tersisa (qty_on_hand) berasal dari Stock In terbaru. Stok masuk tanpa
+        pembelian (atau sisa melebihi riwayat masuk) dihitung reguler.
+        """
+        products = (await self.session.scalars(select(Product).where(Product.qty_on_hand > 0))).all()
+        if not products:
+            return {"reguler": [], "modal_awal": []}
+        cards = (await self.session.scalars(
+            select(StockCard).where(
+                StockCard.product_id.in_([p.id for p in products]),
+                StockCard.direction == "in",
+                StockCard.finance_status != "cancelled",
+            ).order_by(StockCard.movement_date.desc(), StockCard.created_at.desc())
+        )).all()
+        heads = {c.nota_id or c.id for c in cards}
+        modal = set((await self.session.scalars(
+            select(Purchase.stock_card_id).where(Purchase.stock_card_id.in_(heads), Purchase.payment_method == "modal_awal")
+        )).all()) if heads else set()
+        by_product: dict[str, list[StockCard]] = {}
+        for c in cards:
+            by_product.setdefault(c.product_id, []).append(c)
+        out: dict[str, list[dict[str, Any]]] = {"reguler": [], "modal_awal": []}
+        for p in products:
+            left = p.qty_on_hand
+            split = {"reguler": 0, "modal_awal": 0}
+            for c in by_product.get(p.id, []):
+                if left <= 0:
+                    break
+                take = min(left, c.quantity)
+                split["modal_awal" if (c.nota_id or c.id) in modal else "reguler"] += take
+                left -= take
+            split["reguler"] += max(left, 0)
+            for key, qty in split.items():
+                if qty > 0:
+                    out[key].append({
+                        "product_id": p.id, "sku": p.sku, "name": p.name, "unit": p.unit_of_measure,
+                        "qty": qty, "hpp": str(p.cost_price),
+                        "value": str((p.cost_price * qty).quantize(Decimal("0.01"))),
+                    })
+        return out

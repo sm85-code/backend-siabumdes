@@ -23,6 +23,18 @@ from modules.siabumdes.toko.infrastructure.models import TokoEntry, TokoItem
 MODAL = Decimal("30000000")
 ZERO = Decimal("0")
 
+# Saldo awal riil per akhir September 2026 (setelah bagi hasil). Untuk tanggal
+# setelah OPENING_DATE: posisi = saldo awal + mutasi setelah OPENING_DATE;
+# laba = akumulasi sejak 1 Oktober 2026. Tanggal s.d. OPENING_DATE tetap seperti dulu.
+OPENING_DATE = date(2026, 9, 30)
+OPENING = {
+    "kas": Decimal("2124500"),
+    "piutang": Decimal("8392000"),
+    "piutang_lainnya": Decimal("9700000"),  # termasuk kas bon tukang 500.000
+    "stok": Decimal("9783500"),
+    "utang": ZERO,
+}
+
 
 @dataclass
 class Trade:
@@ -69,6 +81,17 @@ def position(data: Data, d: date) -> dict[str, Decimal]:
         "utang": utang,
         "laba": toko_in + revenue - toko_out - stock_out + adj,
     }
+
+
+def position_with_opening(data: Data, d: date) -> dict[str, Decimal]:
+    p = position(data, d)
+    if d <= OPENING_DATE:
+        return p
+    base = position(data, OPENING_DATE)
+    out = {k: OPENING[k] + p[k] - base[k] for k in ("kas", "stok", "piutang", "utang")}
+    out["laba"] = p["laba"] - base["laba"]
+    out["piutang_lainnya"] = OPENING["piutang_lainnya"]
+    return out
 
 
 async def load(session) -> Data:

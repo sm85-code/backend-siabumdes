@@ -647,10 +647,11 @@ async def report_valuation(
 
 @router.get("/reports/remaining-by-source")
 async def report_remaining_by_source(
+    as_of: Optional[date] = None,
     _: User = Depends(require_inventory_user),
     session: AsyncSession = Depends(get_db),
 ):
-    return await InventoryService(session).remaining_by_source_report()
+    return await InventoryService(session).remaining_by_source_report(as_of=as_of)
 
 
 @router.get("/reports/movements")

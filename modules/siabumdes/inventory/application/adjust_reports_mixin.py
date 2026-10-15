@@ -279,23 +279,36 @@ class InventoryAdjustReportsMixin:
             "net_qty": in_qty - out_qty,
         }
 
-    async def remaining_by_source_report(self) -> dict[str, Any]:
+    async def remaining_by_source_report(self, as_of: Optional[date] = None) -> dict[str, Any]:
         """Sisa stok per SKU menurut sumber pembelian (reguler vs Belanja Modal Awal).
 
         Atribusi FIFO: barang keluar memakai stok masuk terlama dulu, jadi stok
         tersisa (qty_on_hand) berasal dari Stock In terbaru. Stok masuk tanpa
         pembelian (atau sisa melebihi riwayat masuk) dihitung reguler.
         """
-        products = (await self.session.scalars(select(Product).where(Product.qty_on_hand > 0))).all()
+        products = (await self.session.scalars(select(Product))).all()
+        on_hand = {p.id: p.qty_on_hand for p in products}
+        if as_of:
+            # Mundurkan stok saat ini ke akhir tanggal as_of.
+            later = (await self.session.scalars(select(StockCard).where(
+                StockCard.movement_date > as_of, StockCard.finance_status != "cancelled"))).all()
+            for c in later:
+                if c.product_id in on_hand:
+                    on_hand[c.product_id] += -c.quantity if c.direction == "in" else c.quantity
+            for a in (await self.session.scalars(select(StockAdjustment).where(StockAdjustment.adjustment_date > as_of))).all():
+                if a.product_id in on_hand:
+                    on_hand[a.product_id] -= a.quantity_delta
+        products = [p for p in products if on_hand[p.id] > 0]
         if not products:
             return {"reguler": [], "modal_awal": []}
-        cards = (await self.session.scalars(
-            select(StockCard).where(
-                StockCard.product_id.in_([p.id for p in products]),
-                StockCard.direction == "in",
-                StockCard.finance_status != "cancelled",
-            ).order_by(StockCard.movement_date.desc(), StockCard.created_at.desc())
-        )).all()
+        stmt = select(StockCard).where(
+            StockCard.product_id.in_([p.id for p in products]),
+            StockCard.direction == "in",
+            StockCard.finance_status != "cancelled",
+        ).order_by(StockCard.movement_date.desc(), StockCard.created_at.desc())
+        if as_of:
+            stmt = stmt.where(StockCard.movement_date <= as_of)
+        cards = (await self.session.scalars(stmt)).all()
         heads = {c.nota_id or c.id for c in cards}
         modal = set((await self.session.scalars(
             select(Purchase.stock_card_id).where(Purchase.stock_card_id.in_(heads), Purchase.payment_method == "modal_awal")
@@ -305,7 +318,7 @@ class InventoryAdjustReportsMixin:
             by_product.setdefault(c.product_id, []).append(c)
         out: dict[str, list[dict[str, Any]]] = {"reguler": [], "modal_awal": []}
         for p in products:
-            left = p.qty_on_hand
+            left = on_hand[p.id]
             split = {"reguler": 0, "modal_awal": 0}
             for c in by_product.get(p.id, []):
                 if left <= 0:

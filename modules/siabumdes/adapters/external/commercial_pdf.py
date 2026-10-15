@@ -151,21 +151,10 @@ def commercial_pdf(data):
     if statement:
         labels = ["Tanggal / Invoice", "Mitra / Barang", "Qty", "Nilai Transaksi", "Dibayar", "Sisa Tagihan"]
         widths = [0.17, 0.31, 0.06, 0.16, 0.15, 0.15]
-    elif invoice:
-        labels = [
-            "Tanggal",
-            "Nama Barang / Jasa",
-            "Ukuran / Qty",
-            "Harga Satuan",
-            "Harga Barang",
-            "Packing / Tambahan",
-            "Proses Pesanan",
-            "Total",
-        ]
-        widths = [0.09, 0.23, 0.09, 0.12, 0.12, 0.11, 0.11, 0.13]
     else:
-        labels = ["Tanggal", "Kode Pesanan", "Nama Barang", "Ukuran", "Qty", "Harga Satuan", "Total"]
-        widths = [0.10, 0.21, 0.23, 0.11, 0.06, 0.13, 0.16]
+        # Invoice & PO/Rekap Pembelian: kolom sama, Nama Barang paling lebar dan dibungkus.
+        labels = ["Tanggal", "Nama Barang", "Qty", "Harga Satuan", "Jumlah"]
+        widths = [0.11, 0.44, 0.11, 0.16, 0.18]
     rows = [[p(h, "th") for h in labels]]
     for item in data["items"]:
         if statement:
@@ -177,28 +166,15 @@ def commercial_pdf(data):
                 rupiah(item["paid"]),
                 rupiah(item["outstanding"]),
             ]
-        elif invoice:
-            values = [
-                day(item["date"]),
-                item["name"],
-                (item.get("size") or "—") + f"\n{item['quantity']} {item.get('unit', '')}",
-                rupiah(item["price"]),
-                rupiah(item.get("goods", Decimal(item["price"]) * item["quantity"])),
-                rupiah(item["packing"]),
-                rupiah(item["processing"]),
-                rupiah(item["total"]),
-            ]
         else:
             values = [
                 day(item["date"]),
-                item.get("order_code") or "—",
-                item["name"],
-                item.get("size") or "—",
-                item["quantity"],
+                (f"[{item['sku']}] " if item.get("sku") else "") + item["name"],
+                f"{item['quantity']} {item.get('unit', '')}".strip(),
                 rupiah(item["price"]),
-                rupiah(item["total"]),
+                rupiah(item.get("goods", Decimal(item["price"]) * item["quantity"]) if invoice else item["total"]),
             ]
-        money_from = 3 if invoice or statement else 5
+        money_from = 3 if statement else 2
         rows.append([p(v, "right" if i >= money_from else "body") for i, v in enumerate(values)])
     total = ["TOTAL"] + [""] * (len(labels) - 2) + [rupiah(data["total"])]
     if statement:
@@ -211,17 +187,11 @@ def commercial_pdf(data):
             rupiah(sum(Decimal(i["outstanding"]) for i in data["items"])),
         ]
     if invoice:
-        total = [
-            "TOTAL",
-            "",
-            "",
-            "",
-            rupiah(sum(Decimal(i.get("goods", Decimal(i["price"]) * i["quantity"])) for i in data["items"])),
-            rupiah(sum(Decimal(i["packing"]) for i in data["items"])),
-            rupiah(sum(Decimal(i["processing"]) for i in data["items"])),
-            rupiah(data["total"]),
-        ]
-    rows.append([p(v, "right" if i >= 3 else "body") for i, v in enumerate(total)])
+        fees = sum(Decimal(i.get("packing") or 0) + Decimal(i.get("processing") or 0) for i in data["items"])
+        if fees:
+            rows.append([p(v, "right" if i >= 2 else "body") for i, v in enumerate(
+                ["", "Biaya tambahan (packing / proses)", "", "", rupiah(fees)])])
+    rows.append([p(v, "right" if i >= (3 if statement else 2) else "body") for i, v in enumerate(total)])
     table = Table(rows, colWidths=[width * w for w in widths], repeatRows=1, hAlign="LEFT")
     table.setStyle(
         TableStyle(

@@ -271,3 +271,19 @@ async def delete_entry(
     await session.delete(entry)
     await session.flush()
     return {"deleted": entry_id}
+
+
+@router.get("/neraca")
+async def neraca(
+    dates: list[date] = Query(..., max_length=12),
+    _: User = Depends(require_toko_user),
+    session: AsyncSession = Depends(get_db),
+):
+    """Posisi neraca kumulatif per tanggal (lihat toko.application.neraca)."""
+    from modules.siabumdes.toko.application.neraca import MODAL, load, position
+
+    data = await load(session)
+    return {
+        "modal": str(MODAL),
+        "positions": [{"date": d.isoformat(), **{k: str(v) for k, v in position(data, d).items()}} for d in dates],
+    }

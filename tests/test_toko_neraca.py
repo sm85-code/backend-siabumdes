@@ -43,3 +43,5 @@ def test_saldo_awal_oktober():
     assert p["kas"] == OPENING["kas"] + 100 and p["laba"] == D("100")
     assert sum(OPENING.values()) == MODAL
     assert position_with_opening(data, OPENING_DATE) == position(data, OPENING_DATE)
+    q = position_with_opening(data, date(2026, 10, 5))
+    assert q["piutang"] == 0 and q["kas"] == OPENING["kas"] + OPENING["piutang"] + 100

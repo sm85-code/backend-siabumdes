@@ -99,7 +99,51 @@ async def sources(session, kind, unit_id, partner_id=None, start=None, end=None,
     return result
 
 
-async def build_snapshot(session, body, unit, branding, lock_sources=False):
+async def source_lines(session, kind, source_ids):
+    """Rincian per baris nota untuk transaksi sumber: (tanggal, produk, qty, harga satuan, nilai).
+
+    Penjualan: harga jual per baris (stock_cards.sell_price; data lama dibagi
+    proporsional dari Sale.total_amount). Pembelian: harga beli (unit_cost).
+    Nilai baris selalu dijumlahkan tepat ke total transaksi.
+    """
+    model = KINDS[kind][0]
+    heads = dict((await session.execute(
+        select(model.id, model.stock_card_id).where(model.id.in_(source_ids))
+    )).all()) if source_ids else {}
+    if not heads:
+        return {}
+    pairs = (await session.execute(
+        select(StockCard, Product).join(Product, StockCard.product_id == Product.id)
+        .where((StockCard.nota_id.in_(heads.values())) | (StockCard.id.in_(heads.values())))
+        .order_by(StockCard.created_at, StockCard.id)
+    )).all()
+    by_head: dict = {}
+    for card, product in pairs:
+        by_head.setdefault(card.nota_id or card.id, []).append((card, product))
+    values = {}
+    if model is Sale:
+        from modules.siabumdes.inventory.application.services import InventoryService
+
+        values = await InventoryService(session)._sale_line_values([c for c, _ in pairs])
+    totals = dict((await session.execute(select(model.id, model.total_amount).where(model.id.in_(heads)))).all())
+    out = {}
+    for sid, head in heads.items():
+        lines = by_head.get(head, [])
+        result, acc = [], Decimal(0)
+        for i, (card, product) in enumerate(lines):
+            value = Decimal(values.get(card.id, card.total_value))
+            if i == len(lines) - 1:
+                value = Decimal(totals[sid]) - acc
+            acc += value
+            price = (value / card.quantity).quantize(CENT) if card.quantity else Decimal(0)
+            result.append({"date": card.movement_date.isoformat(), "name": product.name, "sku": product.sku,
+                           "quantity": card.quantity, "unit": product.unit_of_measure,
+                           "price": str(price), "value": value.quantize(CENT)})
+        out[sid] = result
+    return out
+
+
+async def build_snapshot(session, body, unit, branding, lock_sources=False, allow_issued=False):
     partner_model = Customer if body.kind == "invoice" else Vendor
     partner = await session.get(partner_model, body.partner_id)
     if not partner or partner.unit_usaha_id != unit.id:
@@ -139,34 +183,44 @@ async def build_snapshot(session, body, unit, branding, lock_sources=False):
         extras = {line.source_id: line for line in body.allocations}
         if set(extras) - set(body.source_ids) or len(extras) != len(body.allocations):
             raise HTTPException(422, "Rincian biaya harus sesuai transaksi yang dipilih")
+        details = await source_lines(session, body.kind, body.source_ids)
         for sid in body.source_ids:
             row = available.get(sid)
             if not row:
                 raise HTTPException(422, "Transaksi sumber tidak sesuai mitra, unit, atau periode")
-            if row["issued"]:
+            if row["issued"] and not allow_issued:
                 raise HTTPException(409, "Transaksi sudah dimasukkan ke dokumen yang diterbitkan")
             extra = extras.get(sid)
             packing, processing = (extra.packing, extra.processing) if extra else (Decimal(0), Decimal(0))
             total = Decimal(row["total"])
             if packing + processing > total:
                 raise HTTPException(422, "Rincian biaya tidak boleh melebihi nilai transaksi yang sudah tercatat")
-            items.append(
-                {
-                    "source_id": sid,
-                    "date": row["date"],
-                    "name": row["name"],
-                    "sku": row["sku"],
-                    "size": extra.size if extra else "",
-                    "order_code": row["invoice_number"],
-                    "quantity": row["quantity"],
-                    "unit": row["unit"],
-                    "price": str(((total - packing - processing) / row["quantity"]).quantize(CENT)),
-                    "goods": str(total - packing - processing),
-                    "packing": str(packing),
-                    "processing": str(processing),
-                    "total": str(total),
-                }
-            )
+            lines = details.get(sid) or []
+            if len(lines) <= 1 and not (packing or processing):
+                lines = lines or [{"date": row["date"], "name": row["name"], "sku": row["sku"], "quantity": row["quantity"],
+                                   "unit": row["unit"], "price": None, "value": total}]
+            if len(lines) == 1 or packing or processing:
+                # Satu baris (atau ada biaya tambahan): satu item per transaksi.
+                first = lines[0] if len(lines) == 1 else None
+                goods = total - packing - processing
+                qty = row["quantity"] if not first else first["quantity"]
+                items.append({
+                    "source_id": sid, "date": row["date"], "name": first["name"] if first else row["name"],
+                    "sku": row["sku"], "size": extra.size if extra else "", "order_code": row["invoice_number"],
+                    "quantity": qty, "unit": row["unit"],
+                    "price": str((goods / qty).quantize(CENT)) if qty else "0",
+                    "goods": str(goods), "packing": str(packing), "processing": str(processing), "total": str(total),
+                })
+                continue
+            for i, line in enumerate(lines):
+                items.append({
+                    # Hanya baris pertama membawa source_id (penanda transaksi sumber).
+                    "source_id": sid if i == 0 else None,
+                    "date": line["date"], "name": line["name"], "sku": line["sku"],
+                    "size": extra.size if extra and i == 0 else "", "order_code": row["invoice_number"],
+                    "quantity": line["quantity"], "unit": line["unit"], "price": line["price"],
+                    "goods": str(line["value"]), "packing": "0", "processing": "0", "total": str(line["value"]),
+                })
     total = sum((Decimal(i["total"]) for i in items), Decimal(0))
     if not items or total <= 0:
         raise HTTPException(422, "Dokumen harus memiliki rincian dengan total lebih dari nol")

@@ -18,7 +18,7 @@ from modules.siabumdes.infrastructure.models import UnitUsaha
 from modules.siabumdes.inventory.application.transaction_labels import transaction_labels
 from modules.siabumdes.inventory.application.services import InventoryService
 from modules.siabumdes.inventory.application.documents import KINDS, build_snapshot, issue_document, sources
-from modules.siabumdes.inventory.infrastructure.models import CommercialDocument, Customer, DocumentSource, Product, Vendor
+from modules.siabumdes.inventory.infrastructure.models import CommercialDocument, Customer, DocumentSource, Product, StockCard, Vendor
 from modules.siabumdes.report_branding import branding_from_org_profile
 from shared.config import public_role
 from shared.database import get_db
@@ -326,6 +326,34 @@ async def preview(body: DocumentIn, user=Depends(require_inventory_user), sessio
     unit = await scoped_unit(session, user)
     snapshot = await build_snapshot(session, body, unit, branding_from_org_profile(await get_org_profile(session)))
     return await pdf_response(snapshot, inline=True)
+
+
+class TransactionsPdfIn(BaseModel):
+    kind: Literal["invoice", "po"]
+    source_ids: list[str] = Field(min_length=1, max_length=500)
+
+
+@router.post("/transactions-pdf")
+async def transactions_pdf(body: TransactionsPdfIn, user=Depends(require_inventory_user), session=Depends(get_db)):
+    """Unduh Invoice (penjualan) / PO (pembelian) langsung dari transaksi, tanpa menerbitkan dokumen."""
+    unit = await scoped_unit(session, user)
+    src_kind = "invoice" if body.kind == "invoice" else "purchase_statement"
+    model, _, partner_field = KINDS[src_kind]
+    rows = (await session.execute(
+        select(getattr(model, partner_field), StockCard.movement_date)
+        .join(StockCard, model.stock_card_id == StockCard.id)
+        .where(model.id.in_(body.source_ids))
+    )).all()
+    partners = {r[0] for r in rows}
+    if len(rows) != len(set(body.source_ids)) or len(partners) != 1 or None in partners:
+        raise HTTPException(422, "Transaksi harus milik satu mitra yang sama")
+    dates = [r[1] for r in rows]
+    doc = DocumentIn(kind=src_kind, partner_id=partners.pop(), period_start=min(dates), period_end=max(dates),
+                     source_ids=list(dict.fromkeys(body.source_ids)))
+    snapshot = await build_snapshot(session, doc, unit, branding_from_org_profile(await get_org_profile(session)),
+                                    allow_issued=True)
+    snapshot["kind"] = body.kind
+    return await pdf_response(snapshot)
 
 
 @router.post("", status_code=201)

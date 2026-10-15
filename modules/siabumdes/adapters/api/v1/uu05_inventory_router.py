@@ -645,6 +645,14 @@ async def report_valuation(
     return await InventoryService(session).stock_valuation_report()
 
 
+@router.get("/reports/remaining-by-source")
+async def report_remaining_by_source(
+    _: User = Depends(require_inventory_user),
+    session: AsyncSession = Depends(get_db),
+):
+    return await InventoryService(session).remaining_by_source_report()
+
+
 @router.get("/reports/movements")
 async def report_movements(
     date_from: Optional[date] = None,

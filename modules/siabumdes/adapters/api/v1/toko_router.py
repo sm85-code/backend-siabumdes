@@ -280,10 +280,11 @@ async def neraca(
     session: AsyncSession = Depends(get_db),
 ):
     """Posisi neraca kumulatif per tanggal (lihat toko.application.neraca)."""
-    from modules.siabumdes.toko.application.neraca import MODAL, load, position
+    from modules.siabumdes.toko.application.neraca import MODAL, OPENING_DATE, load, position_with_opening
 
     data = await load(session)
     return {
         "modal": str(MODAL),
-        "positions": [{"date": d.isoformat(), **{k: str(v) for k, v in position(data, d).items()}} for d in dates],
+        "opening_date": OPENING_DATE.isoformat(),
+        "positions": [{"date": d.isoformat(), **{k: str(v) for k, v in position_with_opening(data, d).items()}} for d in dates],
     }

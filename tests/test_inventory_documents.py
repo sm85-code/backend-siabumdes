@@ -53,6 +53,7 @@ async def test_invoice_uses_recorded_amount_and_snapshots_identity(body, context
         "issued": False,
     }
     monkeypatch.setattr(service, "sources", AsyncMock(return_value=[source]))
+    monkeypatch.setattr(service, "source_lines", AsyncMock(return_value={}))
     body.allocations = []
     snapshot = await service.build_snapshot(session, body, unit, branding)
     assert snapshot["total"] == "100000"
@@ -70,6 +71,7 @@ async def test_invoice_uses_recorded_amount_and_snapshots_identity(body, context
 async def test_invoice_rejects_duplicate_foreign_or_issued_sources(body, context, monkeypatch):
     session, unit, branding = context
     monkeypatch.setattr(service, "sources", AsyncMock(return_value=[]))
+    monkeypatch.setattr(service, "source_lines", AsyncMock(return_value={}))
     with pytest.raises(HTTPException) as error:
         await service.build_snapshot(session, body, unit, branding)
     assert error.value.status_code == 422
@@ -78,6 +80,7 @@ async def test_invoice_rejects_duplicate_foreign_or_issued_sources(body, context
         await service.build_snapshot(session, body, unit, branding)
     body.source_ids = ["sale"]
     monkeypatch.setattr(service, "sources", AsyncMock(return_value=[{"id": "sale", "issued": True}]))
+    monkeypatch.setattr(service, "source_lines", AsyncMock(return_value={}))
     with pytest.raises(HTTPException) as error:
         await service.build_snapshot(session, body, unit, branding)
     assert error.value.status_code == 409
@@ -100,6 +103,7 @@ async def test_fees_are_allocation_not_extra_revenue(body, context, monkeypatch)
         "issued": False,
     }
     monkeypatch.setattr(service, "sources", AsyncMock(return_value=[source]))
+    monkeypatch.setattr(service, "source_lines", AsyncMock(return_value={}))
     body.allocations = [Allocation(source_id="sale", packing="20000", processing="10000")]
     snapshot = await service.build_snapshot(session, body, unit, branding)
     assert snapshot["total"] == "100000"

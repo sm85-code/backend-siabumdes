@@ -34,6 +34,7 @@ OPENING = {
     "stok": Decimal("9783500"),
     "utang": ZERO,
 }
+PIUTANG_LAIN_LAMA = Decimal("9200000")
 # Piutang Usaha saldo awal tertagih di Minggu 1 Oktober: pindah ke Kas.
 PIUTANG_AWAL_TERTAGIH = date(2026, 10, 5)
 
@@ -53,6 +54,17 @@ class Data:
     cards: list[tuple[date, str, Decimal]] = field(default_factory=list)  # (tanggal, in|out, nilai)
     adjustments: list[tuple[date, Decimal]] = field(default_factory=list)  # (tanggal, nilai +/-)
     entries: list[tuple[date, str, Decimal]] = field(default_factory=list)  # (tanggal, pemasukan|pengeluaran, nominal)
+    # Kas bon / pinjaman / piutang lainnya: (tanggal, +keluar kas jadi piutang, -pelunasan).
+    piutang_lain: list[tuple[date, Decimal]] = field(default_factory=list)
+
+
+# Item Perduitan yang namanya memuat kata ini dicatat sebagai Piutang Lainnya (bukan laba).
+PIUTANG_LAIN_KEYS = ("kas bon", "kasbon", "piutang lain", "pinjam")
+
+
+def is_piutang_lain(name: str) -> bool:
+    n = name.lower()
+    return any(k in n for k in PIUTANG_LAIN_KEYS)
 
 
 def _paid(t: Trade, d: date, credit: str) -> Decimal:
@@ -76,8 +88,10 @@ def position(data: Data, d: date) -> dict[str, Decimal]:
     stock_in = sum((v for t, k, v in data.cards if t <= d and k == "in"), ZERO)
     stock_out = sum((v for t, k, v in data.cards if t <= d and k == "out"), ZERO)
     adj = sum((v for t, v in data.adjustments if t <= d), ZERO)
+    lain = sum((v for t, v in data.piutang_lain if t <= d), ZERO)
     return {
-        "kas": MODAL + toko_in - toko_out + cash_in - cash_out,
+        "kas": MODAL + toko_in - toko_out + cash_in - cash_out - lain,
+        "piutang_lainnya": lain,
         "stok": stock_in - stock_out + adj,
         "piutang": piutang,
         "utang": utang,
@@ -88,6 +102,9 @@ def position(data: Data, d: date) -> dict[str, Decimal]:
 def position_with_opening(data: Data, d: date) -> dict[str, Decimal]:
     p = position(data, d)
     if d <= OPENING_DATE:
+        # Sebelum saldo awal: Piutang Lainnya lama 9,2 jt dipinjamkan dari kas.
+        p["kas"] -= PIUTANG_LAIN_LAMA
+        p["piutang_lainnya"] += PIUTANG_LAIN_LAMA
         return p
     base = position(data, OPENING_DATE)
     out = {k: OPENING[k] + p[k] - base[k] for k in ("kas", "stok", "piutang", "utang")}
@@ -118,6 +135,11 @@ async def load(session) -> Data:
     )).all():
         # Nilai penyesuaian tidak disimpan; pakai HPP produk (sama seperti jurnal penyesuaian).
         data.adjustments.append((a.adjustment_date, Decimal(cost) * a.quantity_delta))
-    for e, jenis in (await session.execute(select(TokoEntry, TokoItem.jenis).join(TokoItem, TokoEntry.item_id == TokoItem.id))).all():
-        data.entries.append((e.tanggal, jenis, Decimal(e.nominal)))
+    for e, jenis, name in (await session.execute(
+        select(TokoEntry, TokoItem.jenis, TokoItem.name).join(TokoItem, TokoEntry.item_id == TokoItem.id)
+    )).all():
+        if is_piutang_lain(name):
+            data.piutang_lain.append((e.tanggal, Decimal(e.nominal) * (-1 if jenis == "pemasukan" else 1)))
+        else:
+            data.entries.append((e.tanggal, jenis, Decimal(e.nominal)))
     return data

@@ -30,12 +30,14 @@ ZERO = Decimal("0")
 OPENING_DATE = date(2026, 9, 30)
 OPENING = {
     "kas": Decimal("2124500"),
-    "piutang": Decimal("8392000"),
+    "piutang": ZERO,  # saldo awal piutang 8.392.000 diabaikan (permintaan pengguna)
     "piutang_lainnya": Decimal("9700000"),  # termasuk kas bon tukang 500.000
     "stok": Decimal("9783500"),
     "utang": ZERO,
 }
 PIUTANG_LAIN_LAMA = Decimal("9200000")
+# Perduitan membaca transaksi menu Transaksi mulai tanggal ini; sebelumnya diabaikan.
+JOURNAL_START = date(2026, 9, 1)
 
 
 @dataclass
@@ -90,19 +92,34 @@ def position(data: Data, d: date) -> dict[str, Decimal]:
     stock_out = sum((v for t, k, v in data.cards if t <= d and k == "out"), ZERO)
     adj = sum((v for t, v in data.adjustments if t <= d), ZERO)
     lain = sum((v for t, v in data.piutang_lain if t <= d), ZERO)
-    j = {k: sum((x.get(k, ZERO) for t, x in data.journal if t <= d), ZERO)
-         for k in ("kas", "piutang", "piutang_lainnya", "utang", "stok", "laba")}
     return {
-        "kas": MODAL + toko_in - toko_out + cash_in - cash_out - lain + j["kas"],
-        "piutang_lainnya": lain + j["piutang_lainnya"],
-        "stok": stock_in - stock_out + adj + j["stok"],
-        "piutang": piutang + j["piutang"],
-        "utang": utang + j["utang"],
-        "laba": toko_in + revenue - toko_out - stock_out + adj + j["laba"],
+        "kas": MODAL + toko_in - toko_out + cash_in - cash_out - lain,
+        "piutang_lainnya": lain,
+        "stok": stock_in - stock_out + adj,
+        "piutang": piutang,
+        "utang": utang,
+        "laba": toko_in + revenue - toko_out - stock_out + adj,
     }
 
 
+def journal_sum(data: Data, d: date, start: date = JOURNAL_START) -> dict[str, Decimal]:
+    return {k: sum((x.get(k, ZERO) for t, x in data.journal if start <= t <= d), ZERO)
+            for k in ("kas", "piutang", "piutang_lainnya", "utang", "stok", "laba")}
+
+
 def position_with_opening(data: Data, d: date) -> dict[str, Decimal]:
+    """Transaksi menu Transaksi dihitung sejak JOURNAL_START (1 Sep 2026) dan tidak
+    termasuk dalam saldo awal 30 Sep: posisi = saldo awal/legacy + jurnal s.d. tanggal.
+    Laba dari jurnal setelah saldo awal hanya dihitung sejak 1 Okt (laba September sudah lewat)."""
+    j = journal_sum(data, d)
+    out = _base_position(data, d)
+    for k in ("kas", "piutang", "piutang_lainnya", "utang", "stok"):
+        out[k] += j[k]
+    out["laba"] += j["laba"] if d <= OPENING_DATE else journal_sum(data, d, date(2026, 10, 1))["laba"]
+    return out
+
+
+def _base_position(data: Data, d: date) -> dict[str, Decimal]:
     p = position(data, d)
     if d <= OPENING_DATE:
         # Sebelum saldo awal: Piutang Lainnya lama 9,2 jt dipinjamkan dari kas.
@@ -142,7 +159,7 @@ async def load(session) -> Data:
         else:
             data.entries.append((e.tanggal, jenis, Decimal(e.nominal)))
     # Transaksi manual dari menu Transaksi (unit UU05), dipetakan lewat akun COA.
-    for row in await load_journal(session):
+    for row in await load_journal(session, start=JOURNAL_START):
         if row.deltas():
             data.journal.append((row.date, row.deltas()))
     return data

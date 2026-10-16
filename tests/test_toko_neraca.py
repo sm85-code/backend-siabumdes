@@ -43,7 +43,7 @@ def test_saldo_awal_oktober():
     data = Data(entries=[(date(2026, 9, 5), "pemasukan", D("999")), (date(2026, 10, 2), "pemasukan", D("100"))])
     p = position_with_opening(data, date(2026, 10, 3))
     assert p["kas"] == OPENING["kas"] + 100 and p["laba"] == D("100")
-    assert sum(OPENING.values()) == MODAL
+    assert OPENING["piutang"] == 0
     assert position_with_opening(data, OPENING_DATE)["piutang_lainnya"] == D("9200000")
     # Pelunasan 10 Okt atas penjualan piutang 20 Sep; kas bon 12 Okt.
     data.sales.append(Trade(date(2026, 9, 20), D("300"), "piutang", [(date(2026, 10, 10), D("300"))]))
@@ -67,5 +67,13 @@ def test_transaksi_umum_dipetakan_ke_neraca():
     assert _row("Kas", "aset", "Modal Disetor", "ekuitas").deltas() == {}
     data = Data(journal=[(lunas.date, lunas.deltas()), (beban.date, beban.deltas()),
                          (date(2026, 10, 11), _row("Utang Usaha", "kewajiban", "Kas", "aset").deltas())])
-    p = position(data, date(2026, 10, 12))
-    assert p["kas"] + p["stok"] + p["piutang"] + p["piutang_lainnya"] == p["utang"] + MODAL + p["laba"]
+    p = position_with_opening(data, date(2026, 10, 12))
+    assert p["kas"] == OPENING["kas"] + 500 - 500 - 500 and p["piutang_lainnya"] == OPENING["piutang_lainnya"] - 500
+    assert p["laba"] == D("-500")
+
+
+def test_jurnal_mulai_september():
+    lunas = {"kas": D("100"), "piutang_lainnya": D("-100")}
+    data = Data(journal=[(date(2026, 8, 31), {"kas": D("999")}), (date(2026, 9, 10), lunas)])
+    assert position_with_opening(data, date(2026, 9, 12))["kas"] == position_with_opening(Data(), date(2026, 9, 12))["kas"] + 100
+    assert position_with_opening(data, date(2026, 10, 3))["kas"] == OPENING["kas"] + 100

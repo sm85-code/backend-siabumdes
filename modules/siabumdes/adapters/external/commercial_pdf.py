@@ -53,6 +53,10 @@ def commercial_pdf(data):
         ),
         "org": ParagraphStyle("org", fontName="CommercialSansBold", fontSize=16, leading=20),
         "title": ParagraphStyle("title", fontName="CommercialSansBold", fontSize=19, leading=24, alignment=TA_CENTER),
+        "center": ParagraphStyle(
+            "center", fontName="CommercialSans", fontSize=8, leading=11, textColor=colors.HexColor("#526070"),
+            alignment=TA_CENTER,
+        ),
         "right": ParagraphStyle("right", fontName="CommercialSans", fontSize=8, leading=12, alignment=TA_RIGHT),
         "th": ParagraphStyle(
             "th", fontName="CommercialSansBold", fontSize=8, leading=11, textColor=colors.white, alignment=TA_CENTER
@@ -106,6 +110,7 @@ def commercial_pdf(data):
                 [
                     p(TITLES[data["kind"]] + (" — DIBATALKAN" if data.get("status") == "void" else ""), "title"),
                     Spacer(1, 3 * mm),
+                    p(data["period_label"], "center") if data.get("period_label") else
                     p(f"Periode: {day(data.get('period_start'))} s.d. {day(data.get('period_end'))}", "small"),
                 ],
             ]

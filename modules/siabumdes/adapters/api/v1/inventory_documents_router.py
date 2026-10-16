@@ -353,6 +353,26 @@ async def transactions_pdf(body: TransactionsPdfIn, user=Depends(require_invento
     snapshot = await build_snapshot(session, doc, unit, branding_from_org_profile(await get_org_profile(session)),
                                     allow_issued=True)
     snapshot["kind"] = body.kind
+    # Nomor mingguan: urutan mitra (nama, id) yang bertransaksi di minggu itu.
+    from datetime import timedelta
+
+    from modules.siabumdes.inventory.application.weekly_number import doc_number, week_label, week_of
+
+    monday, _ = week_of(doc.period_end)
+    partner_model = KINDS[src_kind][1]
+    week_partners = (await session.execute(
+        select(partner_model.id).distinct().join(model, getattr(model, partner_field) == partner_model.id)
+        .join(StockCard, model.stock_card_id == StockCard.id)
+        .where(partner_model.unit_usaha_id == unit.id,
+               StockCard.movement_date >= monday, StockCard.movement_date <= monday + timedelta(days=6))
+    )).scalars().all()
+    names = {r.id: r.name for r in (await session.scalars(
+        select(partner_model).where(partner_model.id.in_(list(week_partners) + [doc.partner_id])))).all()}
+    order = sorted(names, key=lambda i: ((names[i] or "").lower(), i))
+    snapshot["number"] = doc_number("INV" if body.kind == "invoice" else "PO", names[doc.partner_id],
+                                    doc.period_end, order.index(doc.partner_id) + 1)
+    snapshot["issued_date"] = (monday + timedelta(days=5)).isoformat()
+    snapshot["period_label"] = week_label(doc.period_end)
     return await pdf_response(snapshot)
 
 

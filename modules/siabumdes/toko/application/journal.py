@@ -15,6 +15,7 @@ from sqlalchemy import select
 from modules.siabumdes.infrastructure.models import Account, Transaction, UnitUsaha
 
 UNIT_CODE = "UU05"
+JOURNAL_START = date(2026, 9, 1)  # transaksi sebelum September 2026 diabaikan
 AUTO_REF_PREFIXES = ("TOKO:", "YIELD:", "BAGIHASIL-", "stock-", "sale-", "purchase-")
 AUTO_TYPES = ("inventory_", "purchase_payment", "sale_payment", "jurnal_penutup", "bagi_hasil", "imbal_hasil")
 
@@ -103,6 +104,7 @@ async def load_journal(session, start: date | None = None, end: date | None = No
             accounts[a.code] = a
     q = (select(Transaction).join(UnitUsaha, Transaction.unit_usaha_id == UnitUsaha.id)
          .where(UnitUsaha.code == UNIT_CODE).order_by(Transaction.date, Transaction.created_at))
+    start = max(start or JOURNAL_START, JOURNAL_START)
     if start:
         q = q.where(Transaction.date >= start)
     if end:

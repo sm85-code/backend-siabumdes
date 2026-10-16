@@ -44,5 +44,9 @@ def test_saldo_awal_oktober():
     assert p["kas"] == OPENING["kas"] + 100 and p["laba"] == D("100")
     assert sum(OPENING.values()) == MODAL
     assert position_with_opening(data, OPENING_DATE)["piutang_lainnya"] == D("9200000")
-    q = position_with_opening(data, date(2026, 10, 5))
-    assert q["piutang"] == 0 and q["kas"] == OPENING["kas"] + OPENING["piutang"] + 100
+    # Pelunasan 10 Okt atas penjualan piutang 20 Sep; kas bon 12 Okt.
+    data.sales.append(Trade(date(2026, 9, 20), D("300"), "piutang", [(date(2026, 10, 10), D("300"))]))
+    data.piutang_lain.append((date(2026, 10, 12), D("50")))
+    q = position_with_opening(data, date(2026, 10, 12))
+    assert q["piutang"] == OPENING["piutang"] - 300 and q["kas"] == OPENING["kas"] + 100 + 300 - 50
+    assert q["piutang_lainnya"] == OPENING["piutang_lainnya"] + 50

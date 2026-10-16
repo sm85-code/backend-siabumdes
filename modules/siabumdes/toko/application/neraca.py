@@ -35,8 +35,6 @@ OPENING = {
     "utang": ZERO,
 }
 PIUTANG_LAIN_LAMA = Decimal("9200000")
-# Piutang Usaha saldo awal tertagih di Minggu 1 Oktober: pindah ke Kas.
-PIUTANG_AWAL_TERTAGIH = date(2026, 10, 5)
 
 
 @dataclass
@@ -107,12 +105,8 @@ def position_with_opening(data: Data, d: date) -> dict[str, Decimal]:
         p["piutang_lainnya"] += PIUTANG_LAIN_LAMA
         return p
     base = position(data, OPENING_DATE)
-    out = {k: OPENING[k] + p[k] - base[k] for k in ("kas", "stok", "piutang", "utang")}
+    out = {k: OPENING[k] + p[k] - base[k] for k in ("kas", "stok", "piutang", "utang", "piutang_lainnya")}
     out["laba"] = p["laba"] - base["laba"]
-    if d >= PIUTANG_AWAL_TERTAGIH:
-        out["kas"] += OPENING["piutang"]
-        out["piutang"] -= OPENING["piutang"]
-    out["piutang_lainnya"] = OPENING["piutang_lainnya"]
     return out
 
 

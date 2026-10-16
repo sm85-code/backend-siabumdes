@@ -17,8 +17,8 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from modules.siabumdes.infrastructure.models import Account, Transaction, UnitUsaha
 from modules.siabumdes.inventory.infrastructure.models import Product, Purchase, Sale, StockAdjustment, StockCard
+from modules.siabumdes.toko.application.journal import load_journal
 from modules.siabumdes.toko.infrastructure.models import TokoEntry, TokoItem
 
 MODAL = Decimal("30000000")
@@ -55,6 +55,8 @@ class Data:
     entries: list[tuple[date, str, Decimal]] = field(default_factory=list)  # (tanggal, pemasukan|pengeluaran, nominal)
     # Kas bon / pinjaman / piutang lainnya: (tanggal, +keluar kas jadi piutang, -pelunasan).
     piutang_lain: list[tuple[date, Decimal]] = field(default_factory=list)
+    # Transaksi manual menu Transaksi: (tanggal, {pos: perubahan}) pos = kas|piutang|piutang_lainnya|utang|stok|laba.
+    journal: list[tuple[date, dict[str, Decimal]]] = field(default_factory=list)
 
 
 # Item Perduitan yang namanya memuat kata ini dicatat sebagai Piutang Lainnya (bukan laba).
@@ -64,14 +66,6 @@ PIUTANG_LAIN_KEYS = ("kas bon", "kasbon", "piutang lain", "pinjam")
 def is_piutang_lain(name: str) -> bool:
     n = " ".join((name or "").lower().split())
     return any(k in n for k in PIUTANG_LAIN_KEYS)
-
-
-def journal_piutang_lain(amount: Decimal, debit_name: str, credit_name: str) -> Decimal:
-    """Transaksi umum yang mengenai akun Piutang Lainnya: debit menambah, kredit mengurangi."""
-    d, c = is_piutang_lain(debit_name), is_piutang_lain(credit_name)
-    if d == c:
-        return ZERO
-    return amount if d else -amount
 
 
 def _paid(t: Trade, d: date, credit: str) -> Decimal:
@@ -96,13 +90,15 @@ def position(data: Data, d: date) -> dict[str, Decimal]:
     stock_out = sum((v for t, k, v in data.cards if t <= d and k == "out"), ZERO)
     adj = sum((v for t, v in data.adjustments if t <= d), ZERO)
     lain = sum((v for t, v in data.piutang_lain if t <= d), ZERO)
+    j = {k: sum((x.get(k, ZERO) for t, x in data.journal if t <= d), ZERO)
+         for k in ("kas", "piutang", "piutang_lainnya", "utang", "stok", "laba")}
     return {
-        "kas": MODAL + toko_in - toko_out + cash_in - cash_out - lain,
-        "piutang_lainnya": lain,
-        "stok": stock_in - stock_out + adj,
-        "piutang": piutang,
-        "utang": utang,
-        "laba": toko_in + revenue - toko_out - stock_out + adj,
+        "kas": MODAL + toko_in - toko_out + cash_in - cash_out - lain + j["kas"],
+        "piutang_lainnya": lain + j["piutang_lainnya"],
+        "stok": stock_in - stock_out + adj + j["stok"],
+        "piutang": piutang + j["piutang"],
+        "utang": utang + j["utang"],
+        "laba": toko_in + revenue - toko_out - stock_out + adj + j["laba"],
     }
 
 
@@ -145,19 +141,8 @@ async def load(session) -> Data:
             data.piutang_lain.append((e.tanggal, Decimal(e.nominal) * (-1 if jenis == "pemasukan" else 1)))
         else:
             data.entries.append((e.tanggal, jenis, Decimal(e.nominal)))
-    # Transaksi umum (menu Transaksi) unit UU05 yang mendebit/mengkredit akun Piutang Lainnya,
-    # mis. Debit Kas / Kredit Piutang Lainnya = pelunasan kas bon. Transaksi otomatis
-    # dari Perduitan (reference TOKO:...) dilewati supaya tidak terhitung dua kali.
-    names: dict[str, str] = {}
-    for code, name in (await session.execute(select(Account.code, Account.name))).all():
-        names.setdefault(code, name)
-    for t in (await session.scalars(
-        select(Transaction).join(UnitUsaha, Transaction.unit_usaha_id == UnitUsaha.id)
-        .where(UnitUsaha.code == "UU05", Transaction.is_closing.is_(False))
-    )).all():
-        if (t.reference or "").startswith("TOKO:"):
-            continue
-        v = journal_piutang_lain(Decimal(t.amount), names.get(t.debit_account_code, ""), names.get(t.credit_account_code, ""))
-        if v:
-            data.piutang_lain.append((t.date, v))
+    # Transaksi manual dari menu Transaksi (unit UU05), dipetakan lewat akun COA.
+    for row in await load_journal(session):
+        if row.deltas():
+            data.journal.append((row.date, row.deltas()))
     return data

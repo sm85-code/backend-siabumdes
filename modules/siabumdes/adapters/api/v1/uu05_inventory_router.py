@@ -190,14 +190,12 @@ class StockOutInternalBody(BaseModel):
 class VendorCreateBody(BaseModel):
     name: str
     unit_usaha_id: Optional[str] = None
-    code: Optional[str] = Field(None, max_length=16)
     contact: Optional[str] = None
     address: Optional[str] = None
 
 
 class VendorUpdateBody(BaseModel):
     name: Optional[str] = None
-    code: Optional[str] = Field(None, max_length=16)
     contact: Optional[str] = None
     address: Optional[str] = None
     is_active: Optional[bool] = None
@@ -206,14 +204,12 @@ class VendorUpdateBody(BaseModel):
 class CustomerCreateBody(BaseModel):
     name: str
     unit_usaha_id: Optional[str] = None
-    code: Optional[str] = Field(None, max_length=16)
     contact: Optional[str] = None
     address: Optional[str] = None
 
 
 class CustomerUpdateBody(BaseModel):
     name: Optional[str] = None
-    code: Optional[str] = Field(None, max_length=16)
     contact: Optional[str] = None
     address: Optional[str] = None
     is_active: Optional[bool] = None
@@ -688,7 +684,7 @@ async def create_vendor(
     try:
         uid = await resolve_unit_id(session, body.unit_usaha_id, user)
         return await InventoryService(session).create_vendor(
-            unit_usaha_id=uid, name=body.name, contact=body.contact, address=body.address, code=body.code
+            unit_usaha_id=uid, name=body.name, contact=body.contact, address=body.address
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -703,7 +699,7 @@ async def update_vendor(
 ):
     try:
         return await InventoryService(session).update_vendor(
-            vendor_id, name=body.name, contact=body.contact, address=body.address, is_active=body.is_active, code=body.code
+            vendor_id, name=body.name, contact=body.contact, address=body.address, is_active=body.is_active
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -727,7 +723,7 @@ async def create_customer(
     try:
         uid = await resolve_unit_id(session, body.unit_usaha_id, user)
         return await InventoryService(session).create_customer(
-            unit_usaha_id=uid, name=body.name, contact=body.contact, address=body.address, code=body.code
+            unit_usaha_id=uid, name=body.name, contact=body.contact, address=body.address
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -742,7 +738,7 @@ async def update_customer(
 ):
     try:
         return await InventoryService(session).update_customer(
-            customer_id, name=body.name, contact=body.contact, address=body.address, is_active=body.is_active, code=body.code
+            customer_id, name=body.name, contact=body.contact, address=body.address, is_active=body.is_active
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

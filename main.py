@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from modules.siabumdes.adapters.api.v1.supplier_catalog_router import router as supplier_catalog_router
 from modules.siabumdes.adapters.api.v1 import siabumdes_router, uu05_inventory_router
 from modules.siabumdes.adapters.api.v1.toko_router import router as toko_router
 from modules.siabumdes.adapters.api.v1.inventory_documents_router import router as inventory_documents_router
@@ -93,6 +94,7 @@ app.include_router(io_router)
 app.include_router(siabumdes_router.router)
 app.include_router(inventory_documents_router)
 app.include_router(uu05_inventory_router.router)
+app.include_router(supplier_catalog_router)
 app.include_router(toko_router)
 
 

@@ -29,6 +29,7 @@ def _partner_dict(row: Vendor | Customer) -> dict[str, Any]:
         "id": row.id,
         "unit_usaha_id": row.unit_usaha_id,
         "name": row.name,
+        "code": row.code,
         "contact": row.contact,
         "address": row.address,
         "is_active": row.is_active,
@@ -83,17 +84,18 @@ class InventoryTradeMixin:
         rows = (await self.session.scalars(stmt)).all()
         return [_partner_dict(r) for r in rows]
 
-    async def create_vendor(self, *, unit_usaha_id: str, name: str, contact: Optional[str], address: Optional[str]) -> dict[str, Any]:
+    async def create_vendor(self, *, unit_usaha_id: str, name: str, contact: Optional[str], address: Optional[str], code: Optional[str] = None) -> dict[str, Any]:
         if not name.strip():
             raise ValueError("nama pemasok wajib diisi")
-        row = Vendor(unit_usaha_id=unit_usaha_id, name=name.strip(), contact=contact, address=address)
+        row = Vendor(unit_usaha_id=unit_usaha_id, name=name.strip(), contact=contact, address=address,
+                     code=(code or "").strip().upper() or None)
         self.session.add(row)
         await self.session.flush()
         return _partner_dict(row)
 
     async def update_vendor(
         self, vendor_id: str, *, name: Optional[str] = None, contact: Optional[str] = None,
-        address: Optional[str] = None, is_active: Optional[bool] = None,
+        address: Optional[str] = None, is_active: Optional[bool] = None, code: Optional[str] = None,
     ) -> dict[str, Any]:
         row = await self.session.get(Vendor, vendor_id)
         if not row:
@@ -106,6 +108,8 @@ class InventoryTradeMixin:
             row.address = address
         if is_active is not None:
             row.is_active = is_active
+        if code is not None:
+            row.code = code.strip().upper() or None
         await self.session.flush()
         return _partner_dict(row)
 
@@ -117,17 +121,18 @@ class InventoryTradeMixin:
         rows = (await self.session.scalars(stmt)).all()
         return [_partner_dict(r) for r in rows]
 
-    async def create_customer(self, *, unit_usaha_id: str, name: str, contact: Optional[str], address: Optional[str]) -> dict[str, Any]:
+    async def create_customer(self, *, unit_usaha_id: str, name: str, contact: Optional[str], address: Optional[str], code: Optional[str] = None) -> dict[str, Any]:
         if not name.strip():
             raise ValueError("nama pelanggan wajib diisi")
-        row = Customer(unit_usaha_id=unit_usaha_id, name=name.strip(), contact=contact, address=address)
+        row = Customer(unit_usaha_id=unit_usaha_id, name=name.strip(), contact=contact, address=address,
+                     code=(code or "").strip().upper() or None)
         self.session.add(row)
         await self.session.flush()
         return _partner_dict(row)
 
     async def update_customer(
         self, customer_id: str, *, name: Optional[str] = None, contact: Optional[str] = None,
-        address: Optional[str] = None, is_active: Optional[bool] = None,
+        address: Optional[str] = None, is_active: Optional[bool] = None, code: Optional[str] = None,
     ) -> dict[str, Any]:
         row = await self.session.get(Customer, customer_id)
         if not row:
@@ -140,6 +145,8 @@ class InventoryTradeMixin:
             row.address = address
         if is_active is not None:
             row.is_active = is_active
+        if code is not None:
+            row.code = code.strip().upper() or None
         await self.session.flush()
         return _partner_dict(row)
 

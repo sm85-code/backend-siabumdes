@@ -37,6 +37,31 @@ def partner_code(name: str) -> str:
     return code.upper()
 
 
-def doc_number(prefix: str, name: str, d: date, seq: int) -> str:
+def doc_number(prefix: str, name: str, d: date, seq: int, code: str | None = None) -> str:
     monday, n = week_of(d)
-    return f"{prefix}-{partner_code(name)}-M{n}-{seq:03d}/{ROMAWI[monday.month - 1]}/{monday.year}"
+    return f"{prefix}-{(code or '').strip().upper() or partner_code(name)}-M{n}-{seq:03d}/{ROMAWI[monday.month - 1]}/{monday.year}"
+
+
+async def weekly_meta(session, kind: str, unit_id: str, partner_id: str, d: date) -> dict:
+    """Nomor, tanggal dokumen (Sabtu) dan label periode untuk dokumen minggu tanggal d."""
+    from sqlalchemy import select
+
+    from modules.siabumdes.inventory.infrastructure.models import Customer, Purchase, Sale, StockCard, Vendor
+
+    model, partner_model, field = (Sale, Customer, "customer_id") if kind == "invoice" else (Purchase, Vendor, "vendor_id")
+    monday, _ = week_of(d)
+    ids = (await session.execute(
+        select(partner_model.id).distinct().join(model, getattr(model, field) == partner_model.id)
+        .join(StockCard, model.stock_card_id == StockCard.id)
+        .where(partner_model.unit_usaha_id == unit_id,
+               StockCard.movement_date >= monday, StockCard.movement_date <= monday + timedelta(days=6))
+    )).scalars().all()
+    rows = {r.id: r for r in (await session.scalars(
+        select(partner_model).where(partner_model.id.in_(list(ids) + [partner_id])))).all()}
+    order = sorted(rows, key=lambda i: ((rows[i].name or "").lower(), i))
+    p = rows[partner_id]
+    return {
+        "number": doc_number("INV" if kind == "invoice" else "PO", p.name, d, order.index(partner_id) + 1, p.code),
+        "issued_date": (monday + timedelta(days=5)).isoformat(),
+        "period_label": week_label(d),
+    }

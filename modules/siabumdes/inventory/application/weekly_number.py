@@ -59,40 +59,40 @@ async def resolve_code(session, partner_model, row) -> str:
     return (other or "").strip().upper() or partner_code(row.name)
 
 
-SEQ_RE = re.compile(r"-M\d+-(\d{3,})/")
-
-
 async def weekly_meta(session, kind: str, unit_id: str, partner_id: str, d: date,
                       source_ids: list[str] | None = None) -> dict:
     """Nomor, tanggal dokumen (Sabtu) dan label periode untuk dokumen minggu tanggal d.
 
-    Urutan = jumlah dokumen INV/PO terbit di minggu itu + 1 (mitra sama dapat nomor berikutnya).
-    Jika transaksi sumber sudah masuk dokumen terbit, nomornya dipakai ulang.
+    Urutan tetap per (unit, jenis, minggu, mitra): diberikan saat pertama dibutuhkan
+    (maks minggu itu + 1) lalu dipakai ulang untuk unduhan/terbit berikutnya.
     """
-    from sqlalchemy import select
+    from sqlalchemy import func, select
+    from sqlalchemy.exc import IntegrityError
 
-    from modules.siabumdes.inventory.infrastructure.models import (
-        CommercialDocument, Customer, DocumentSource, Vendor,
-    )
+    from modules.siabumdes.inventory.infrastructure.models import Customer, DocNumber, Vendor
 
     partner_model = Customer if kind == "invoice" else Vendor
     prefix = "INV" if kind == "invoice" else "PO"
-    monday, n = week_of(d)
+    monday, _ = week_of(d)
     row = await session.get(partner_model, partner_id)
     code = await resolve_code(session, partner_model, row)
-    pattern = f"{prefix}-%-M{n}-%/{ROMAWI[monday.month - 1]}/{monday.year}"
-    number = None
-    if source_ids:
-        number = await session.scalar(
-            select(CommercialDocument.number).join(DocumentSource, DocumentSource.document_id == CommercialDocument.id)
-            .where(DocumentSource.source_id.in_(source_ids), CommercialDocument.kind == kind,
-                   CommercialDocument.status != "void", CommercialDocument.number.like(pattern)).limit(1)
-        )
-    if not number:
-        used = (await session.scalars(
-            select(CommercialDocument.number).where(CommercialDocument.number.like(pattern)))).all()
-        seq = max((int(m.group(1)) for u in used if (m := SEQ_RE.search(u or ""))), default=0) + 1
-        number = doc_number(prefix, row.name, d, seq, code)
+    key = (DocNumber.unit_usaha_id == unit_id, DocNumber.kind == kind, DocNumber.week_start == monday)
+    seq = None
+    for _attempt in range(5):
+        seq = await session.scalar(select(DocNumber.seq).where(*key, DocNumber.partner_id == partner_id))
+        if seq:
+            break
+        nxt = (await session.scalar(select(func.max(DocNumber.seq)).where(*key)) or 0) + 1
+        try:
+            async with session.begin_nested():
+                session.add(DocNumber(unit_usaha_id=unit_id, kind=kind, week_start=monday, partner_id=partner_id, seq=nxt))
+            seq = nxt
+            break
+        except IntegrityError:
+            continue  # bentrok dengan permintaan lain: baca ulang
+    if not seq:
+        raise RuntimeError("Gagal menentukan nomor dokumen")
+    number = doc_number(prefix, row.name, d, seq, code)
     return {
         "number": number,
         "issued_date": (monday + timedelta(days=5)).isoformat(),

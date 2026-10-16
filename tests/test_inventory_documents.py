@@ -137,10 +137,14 @@ async def test_issue_only_writes_document_and_source_links(body, context, monkey
     session, unit, branding = context
     snapshot = {"items": [{"source_id": "sale"}]}
     monkeypatch.setattr(service, "build_snapshot", AsyncMock(return_value=snapshot))
+    from modules.siabumdes.inventory.application import weekly_number
+
+    meta = {"number": "INV-MDL-M1-001/X/2026", "issued_date": "2026-10-10", "period_label": "Minggu 1"}
+    monkeypatch.setattr(weekly_number, "weekly_meta", AsyncMock(return_value=meta))
     added = []
     session.add = added.append
     row = await service.issue_document(session, body, unit, branding, SimpleNamespace(id="actor"))
-    assert row.number == "INV/UU05/202610/0001"
+    assert row.number == "INV-MDL-M1-001/X/2026"
     assert [type(r).__name__ for r in added] == ["CommercialDocument", "DocumentSource"]
 
 

@@ -138,6 +138,7 @@ class Vendor(Base):
         String(36), ForeignKey("unit_usaha.id", ondelete="RESTRICT"), nullable=False
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    code: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
     contact: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     address: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
@@ -157,6 +158,7 @@ class Customer(Base):
         String(36), ForeignKey("unit_usaha.id", ondelete="RESTRICT"), nullable=False
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    code: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
     contact: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     address: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)

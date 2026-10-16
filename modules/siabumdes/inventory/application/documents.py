@@ -259,6 +259,21 @@ async def issue_document(session, body, unit, branding, actor):
         )
     )
     number = f"{prefix}/{unit.code}/{body.issued_date:%Y%m}/{count + 1:04d}"
+    issued_date = body.issued_date
+    if body.kind in ("invoice", "po"):
+        # Format mingguan (sama dengan PDF Perduitan): nomor, tanggal Sabtu, label minggu.
+        from datetime import date as _date
+
+        from modules.siabumdes.inventory.application.weekly_number import weekly_meta
+
+        meta = await weekly_meta(session, body.kind, unit.id, body.partner_id, body.period_end)
+        base, tail = meta["number"].split("/", 1)
+        number, n = meta["number"], 1
+        while await session.scalar(select(func.count()).select_from(CommercialDocument).where(CommercialDocument.number == number)):
+            n += 1
+            number = f"{base}-{n}/{tail}"  # dokumen kedua untuk mitra yang sama di minggu itu
+        snapshot.update(meta, number=number)
+        issued_date = _date.fromisoformat(meta["issued_date"])
     snapshot["number"] = number
     row = CommercialDocument(
         id=doc_id,
@@ -266,7 +281,7 @@ async def issue_document(session, body, unit, branding, actor):
         kind=body.kind,
         unit_usaha_id=unit.id,
         partner_id=body.partner_id,
-        issued_date=body.issued_date,
+        issued_date=issued_date,
         snapshot=snapshot,
         created_by=actor.id,
     )

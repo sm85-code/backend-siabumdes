@@ -305,3 +305,14 @@ class DocNumber(Base):
     partner_id: Mapped[str] = mapped_column(String(36), nullable=False)
     seq: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class SupplierCatalogAccess(Base):
+    """Read-only, unit-scoped catalog access issued to the marketplace ERP."""
+    __tablename__ = "supplier_catalog_access"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    token_digest: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    unit_usaha_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    issued_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

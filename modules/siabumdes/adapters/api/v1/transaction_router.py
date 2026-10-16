@@ -163,12 +163,12 @@ TX_SORT_COLUMNS = {
 def _tx_order(sort_by: Optional[str], sort_dir: Optional[str]) -> list:
     """Urutan daftar transaksi lintas halaman. Kolom whitelist; nilai kosong selalu
     di bawah (seperti useSort FE); tiebreak stabil created_at lalu id."""
-    if not sort_by:
+    if not isinstance(sort_by, str) or not sort_by:
         return [Transaction.date.desc(), Transaction.created_at.desc(), Transaction.id.desc()]
     col = TX_SORT_COLUMNS.get(sort_by)
     if col is None:
         raise HTTPException(status_code=422, detail=f"sort_by tidak valid: {sort_by}")
-    desc = (sort_dir or "asc").lower() == "desc"
+    desc = isinstance(sort_dir, str) and sort_dir.lower() == "desc"
     is_str = sort_by in ("description", "debit_account_code", "credit_account_code")
     empty = (func.coalesce(func.trim(col), "") == "") if is_str else col.is_(None)
     tie = Transaction.created_at.desc() if desc else Transaction.created_at.asc()

@@ -355,7 +355,7 @@ async def transactions_pdf(body: TransactionsPdfIn, user=Depends(require_invento
     snapshot["kind"] = body.kind
     from modules.siabumdes.inventory.application.weekly_number import weekly_meta
 
-    snapshot.update(await weekly_meta(session, body.kind, unit.id, doc.partner_id, doc.period_end))
+    snapshot.update(await weekly_meta(session, body.kind, unit.id, doc.partner_id, doc.period_end, doc.source_ids))
     return await pdf_response(snapshot)
 
 

@@ -28,10 +28,11 @@ def test_neraca_seimbang_skenario_lengkap():
         ],
         adjustments=[(date(2026, 10, 12), D("-50000"))],
         entries=[(date(2026, 10, 6), "pemasukan", D("700000")), (date(2026, 10, 7), "pengeluaran", D("250000"))],
+        piutang_lain=[(date(2026, 10, 8), D("400000")), (date(2026, 10, 15), D("-100000"))],
     )
     for day in range(1, 20):
         p = position(data, date(2026, 10, day))
-        aset = p["kas"] + p["stok"] + p["piutang"]
+        aset = p["kas"] + p["stok"] + p["piutang"] + p["piutang_lainnya"]
         assert aset == p["utang"] + MODAL + p["laba"], (day, p)
     end = position(data, date(2026, 10, 19))
     assert end["piutang"] == D("1500000") and end["utang"] == D("2000000")
@@ -42,6 +43,6 @@ def test_saldo_awal_oktober():
     p = position_with_opening(data, date(2026, 10, 3))
     assert p["kas"] == OPENING["kas"] + 100 and p["laba"] == D("100")
     assert sum(OPENING.values()) == MODAL
-    assert position_with_opening(data, OPENING_DATE) == position(data, OPENING_DATE)
+    assert position_with_opening(data, OPENING_DATE)["piutang_lainnya"] == D("9200000")
     q = position_with_opening(data, date(2026, 10, 5))
     assert q["piutang"] == 0 and q["kas"] == OPENING["kas"] + OPENING["piutang"] + 100

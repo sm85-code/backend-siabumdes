@@ -18,3 +18,9 @@ def test_isi_minggu_berdasarkan_tanggal_transaksi():
     wk = date(2026, 10, 5)
     assert in_week(date(2026, 10, 10), wk) and in_week(date(2026, 10, 11), wk)  # Sabtu & Minggu
     assert not in_week(date(2026, 10, 12), wk) and not in_week(date(2026, 10, 4), wk)
+
+
+def test_kode_dari_nomor_invoice():
+    from modules.siabumdes.inventory.application.weekly_number import code_from_invoice
+
+    assert code_from_invoice("INV-BML-001") == "BML" and code_from_invoice("12345") == ""

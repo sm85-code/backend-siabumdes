@@ -48,8 +48,8 @@ def doc_number(prefix: str, name: str, d: date, seq: int, code: str | None = Non
 
 
 async def resolve_code(session, partner_model, row) -> str:
-    """Kode mitra dari field Kode (Manajemen Stok). Jika kosong, pakai Kode mitra lain
-    bernama sama di unit yang sama; baru terakhir turunan nama."""
+    """Kode mitra: field Kode -> Kode mitra lain bernama sama -> kode di nomor invoice
+    transaksi mitra (tampil di Dokumen, mis. INV-BML-001) -> turunan nama."""
     from sqlalchemy import func, select
 
     if (row.code or "").strip():
@@ -61,7 +61,27 @@ async def resolve_code(session, partner_model, row) -> str:
             partner_model.code.is_not(None), partner_model.code != "",
         ).limit(1)
     )
-    return (other or "").strip().upper() or partner_code(row.name)
+    if (other or "").strip():
+        return other.strip().upper()
+    # Kode yang sudah dipakai di nomor invoice/nota transaksi mitra (mis. INV-BML-001 -> BML).
+    from modules.siabumdes.inventory.infrastructure.models import Customer, Purchase, Sale
+
+    model, field = (Sale, Sale.customer_id) if partner_model is Customer else (Purchase, Purchase.vendor_id)
+    numbers = (await session.scalars(
+        select(model.invoice_number).where(field == row.id, model.invoice_number != "").order_by(model.created_at.desc()).limit(20)
+    )).all()
+    for n in numbers:
+        if (c := code_from_invoice(n)):
+            return c
+    return partner_code(row.name)
+
+
+INVOICE_CODE_RE = re.compile(r"^\s*(?:INV|PO|NOTA|SO|PI)[-/ ]([A-Za-z]{2,6})[-/ ]", re.I)
+
+
+def code_from_invoice(number: str | None) -> str:
+    m = INVOICE_CODE_RE.match(number or "")
+    return m.group(1).upper() if m else ""
 
 
 async def weekly_meta(session, kind: str, unit_id: str, partner_id: str, d: date,

@@ -289,6 +289,29 @@ class InventoryCatalogMixin:
         await self.session.refresh(product, attribute_names=["category"])
         return self._product_dict(product)
 
+    async def change_category_sku(self, product_id: str, *, category_id: str, suffix: str) -> dict[str, Any]:
+        """Ganti kategori (boleh walau sudah ada riwayat) dan tulis ulang SKU: KRS.<BARU>-<sufiks>.
+
+        Transaksi/kartu stok tetap tertaut lewat product id; dokumen terbit menyimpan salinannya sendiri.
+        """
+        product = await self.session.get(Product, product_id)
+        if not product:
+            raise ValueError("produk tidak ditemukan")
+        cat = await self.session.get(StockCategory, category_id)
+        if not cat:
+            raise ValueError("kategori tidak ditemukan")
+        new_sku = validate_sku(expected_sku_prefix(cat.code) + (suffix or "").strip().upper(), cat.code)
+        clash = await self.session.scalar(
+            select(Product.id).where(Product.sku == new_sku, Product.unit_usaha_id == product.unit_usaha_id, Product.id != product.id)
+        )
+        if clash:
+            raise ValueError(f"SKU {new_sku} sudah dipakai produk lain")
+        product.category_id = cat.id
+        product.sku = new_sku
+        await self.session.flush()
+        await self.session.refresh(product, attribute_names=["category"])
+        return {**self._product_dict(product), "has_history": await self.product_has_history(product.id)}
+
     async def delete_product(self, product_id: str) -> None:
         product = await self.session.get(Product, product_id)
         if not product:

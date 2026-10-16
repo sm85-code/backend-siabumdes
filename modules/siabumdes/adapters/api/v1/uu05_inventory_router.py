@@ -423,6 +423,25 @@ async def update_product(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+class ProductSkuBody(BaseModel):
+    category_id: str
+    suffix: str = Field(min_length=1, max_length=60)
+
+
+@router.put("/products/{product_id}/sku")
+async def change_product_sku(
+    product_id: str,
+    body: ProductSkuBody,
+    _: User = Depends(require_active_inventory_writer),
+    session: AsyncSession = Depends(get_db),
+):
+    """Ganti kategori + SKU produk (juga produk yang sudah punya riwayat)."""
+    try:
+        return await InventoryService(session).change_category_sku(product_id, category_id=body.category_id, suffix=body.suffix)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @router.delete("/products/{product_id}")
 async def delete_product(
     product_id: str,

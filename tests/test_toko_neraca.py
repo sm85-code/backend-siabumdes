@@ -2,7 +2,7 @@
 from datetime import date
 from decimal import Decimal as D
 
-from modules.siabumdes.toko.application.neraca import MODAL, OPENING, OPENING_DATE, Data, Trade, position, position_with_opening
+from modules.siabumdes.toko.application.neraca import MODAL, OPENING, OPENING_DATE, Data, Trade, is_piutang_lain, journal_piutang_lain, position, position_with_opening
 
 
 def test_neraca_seimbang_skenario_lengkap():
@@ -50,3 +50,10 @@ def test_saldo_awal_oktober():
     q = position_with_opening(data, date(2026, 10, 12))
     assert q["piutang"] == OPENING["piutang"] - 300 and q["kas"] == OPENING["kas"] + 100 + 300 - 50
     assert q["piutang_lainnya"] == OPENING["piutang_lainnya"] + 50
+
+
+def test_piutang_lain_dari_menu_transaksi():
+    assert is_piutang_lain("Penerimaan pembayaran  KASBON")
+    assert journal_piutang_lain(D("500"), "Kas", "Piutang Lainnya") == D("-500")
+    assert journal_piutang_lain(D("500"), "Piutang Lain-lain", "Kas") == D("500")
+    assert journal_piutang_lain(D("500"), "Kas", "Piutang Usaha") == 0

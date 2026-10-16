@@ -17,6 +17,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from modules.siabumdes.infrastructure.models import Account, Transaction, UnitUsaha
 from modules.siabumdes.inventory.infrastructure.models import Product, Purchase, Sale, StockAdjustment, StockCard
 from modules.siabumdes.toko.infrastructure.models import TokoEntry, TokoItem
 
@@ -61,8 +62,16 @@ PIUTANG_LAIN_KEYS = ("kas bon", "kasbon", "piutang lain", "pinjam")
 
 
 def is_piutang_lain(name: str) -> bool:
-    n = name.lower()
+    n = " ".join((name or "").lower().split())
     return any(k in n for k in PIUTANG_LAIN_KEYS)
+
+
+def journal_piutang_lain(amount: Decimal, debit_name: str, credit_name: str) -> Decimal:
+    """Transaksi umum yang mengenai akun Piutang Lainnya: debit menambah, kredit mengurangi."""
+    d, c = is_piutang_lain(debit_name), is_piutang_lain(credit_name)
+    if d == c:
+        return ZERO
+    return amount if d else -amount
 
 
 def _paid(t: Trade, d: date, credit: str) -> Decimal:
@@ -136,4 +145,19 @@ async def load(session) -> Data:
             data.piutang_lain.append((e.tanggal, Decimal(e.nominal) * (-1 if jenis == "pemasukan" else 1)))
         else:
             data.entries.append((e.tanggal, jenis, Decimal(e.nominal)))
+    # Transaksi umum (menu Transaksi) unit UU05 yang mendebit/mengkredit akun Piutang Lainnya,
+    # mis. Debit Kas / Kredit Piutang Lainnya = pelunasan kas bon. Transaksi otomatis
+    # dari Perduitan (reference TOKO:...) dilewati supaya tidak terhitung dua kali.
+    names: dict[str, str] = {}
+    for code, name in (await session.execute(select(Account.code, Account.name))).all():
+        names.setdefault(code, name)
+    for t in (await session.scalars(
+        select(Transaction).join(UnitUsaha, Transaction.unit_usaha_id == UnitUsaha.id)
+        .where(UnitUsaha.code == "UU05", Transaction.is_closing.is_(False))
+    )).all():
+        if (t.reference or "").startswith("TOKO:"):
+            continue
+        v = journal_piutang_lain(Decimal(t.amount), names.get(t.debit_account_code, ""), names.get(t.credit_account_code, ""))
+        if v:
+            data.piutang_lain.append((t.date, v))
     return data

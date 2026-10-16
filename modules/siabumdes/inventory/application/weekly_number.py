@@ -27,19 +27,46 @@ def week_label(d: date) -> str:
     return f"Minggu {n} {BULAN[monday.month - 1]} {monday.year} ({monday:%d/%m/%Y} s.d. {sat:%d/%m/%Y})"
 
 
+VOWELS = set("AEIOU")
+
+
 def partner_code(name: str) -> str:
-    """Kode mitra dari nama: inisial (>=2 kata) atau huruf awal + konsonan (1 kata), 3 huruf."""
-    words = re.findall(r"[A-Za-z0-9]+", name or "")
-    if not words:
+    """Kode mitra otomatis (3 huruf): huruf pertama nama + konsonan awal suku kata berikutnya
+    (konsonan yang diikuti vokal), mis. Mandalawangi -> MDL, Bumi Lestari -> BML."""
+    letters = re.sub(r"[^A-Z]", "", (name or "").upper())
+    if not letters:
         return "XXX"
-    if len(words) >= 2:
-        code = "".join(w[0] for w in words)[:3]
-    else:
-        w = words[0]
-        code = (w[0] + re.sub(r"[aeiouAEIOU]", "", w[1:]))[:3]
-        if len(code) < 3:
-            code = w[:3]
-    return code.upper()
+    code = letters[0]
+    for i in range(1, len(letters) - 1):
+        if len(code) == 3:
+            break
+        if letters[i] not in VOWELS and letters[i + 1] in VOWELS:
+            code += letters[i]
+    for ch in letters[1:]:  # kurang dari 3: tambah konsonan lain, lalu huruf apa saja
+        if len(code) == 3:
+            break
+        if ch not in VOWELS and ch not in code[1:]:
+            code += ch
+    return (code + letters[len(code):])[:3].ljust(3, "X")
+
+
+async def ensure_code(session, partner_model, row) -> str:
+    """Kode tetap mitra: dibuat sistem sekali (unik per unit per jenis, bentrok -> digit) lalu disimpan."""
+    from sqlalchemy import select
+
+    if (row.code or "").strip():
+        return row.code
+    base = partner_code(row.name)
+    used = set((await session.scalars(
+        select(partner_model.code).where(partner_model.unit_usaha_id == row.unit_usaha_id, partner_model.code.is_not(None))
+    )).all())
+    code, n = base, 1
+    while code in used:
+        n += 1
+        code = f"{base}{n}"
+    row.code = code
+    await session.flush()
+    return code
 
 
 def doc_number(prefix: str, name: str, d: date, seq: int, code: str | None = None) -> str:
@@ -48,40 +75,8 @@ def doc_number(prefix: str, name: str, d: date, seq: int, code: str | None = Non
 
 
 async def resolve_code(session, partner_model, row) -> str:
-    """Kode mitra: field Kode -> Kode mitra lain bernama sama -> kode di nomor invoice
-    transaksi mitra (tampil di Dokumen, mis. INV-BML-001) -> turunan nama."""
-    from sqlalchemy import func, select
-
-    if (row.code or "").strip():
-        return row.code.strip().upper()
-    other = await session.scalar(
-        select(partner_model.code).where(
-            partner_model.unit_usaha_id == row.unit_usaha_id,
-            func.lower(func.trim(partner_model.name)) == (row.name or "").strip().lower(),
-            partner_model.code.is_not(None), partner_model.code != "",
-        ).limit(1)
-    )
-    if (other or "").strip():
-        return other.strip().upper()
-    # Kode yang sudah dipakai di nomor invoice/nota transaksi mitra (mis. INV-BML-001 -> BML).
-    from modules.siabumdes.inventory.infrastructure.models import Customer, Purchase, Sale
-
-    model, field = (Sale, Sale.customer_id) if partner_model is Customer else (Purchase, Purchase.vendor_id)
-    numbers = (await session.scalars(
-        select(model.invoice_number).where(field == row.id, model.invoice_number != "").order_by(model.created_at.desc()).limit(20)
-    )).all()
-    for n in numbers:
-        if (c := code_from_invoice(n)):
-            return c
-    return partner_code(row.name)
-
-
-INVOICE_CODE_RE = re.compile(r"^\s*(?:INV|PO|NOTA|SO|PI)[-/ ]([A-Za-z]{2,6})[-/ ]", re.I)
-
-
-def code_from_invoice(number: str | None) -> str:
-    m = INVOICE_CODE_RE.match(number or "")
-    return m.group(1).upper() if m else ""
+    """Kode mitra = kode otomatis yang tampil di Data Orang-Orang."""
+    return await ensure_code(session, partner_model, row)
 
 
 async def weekly_meta(session, kind: str, unit_id: str, partner_id: str, d: date,

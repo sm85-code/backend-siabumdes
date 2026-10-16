@@ -8,6 +8,7 @@ from typing import Any, Optional
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from modules.siabumdes.inventory.application.weekly_number import ensure_code
 from modules.siabumdes.inventory.application.descriptions import inventory_description
 from modules.siabumdes.inventory.application.coa import validate_coa_codes
 from modules.siabumdes.inventory.infrastructure.models import (
@@ -78,24 +79,28 @@ def _sale_dict(s: Sale, movement_date: Optional[date] = None) -> dict[str, Any]:
 class InventoryTradeMixin:
     # ---- Vendors ----
     async def list_vendors(self, *, unit_usaha_id: Optional[str] = None) -> list[dict[str, Any]]:
-        stmt = select(Vendor).order_by(Vendor.name.asc())
+        stmt = select(Vendor).order_by(Vendor.created_at.asc(), Vendor.id.asc())
         if unit_usaha_id:
             stmt = stmt.where(Vendor.unit_usaha_id == unit_usaha_id)
         rows = (await self.session.scalars(stmt)).all()
+        for r in rows:  # isi kode mitra lama yang belum punya kode (urut pembuatan)
+            if not (r.code or "").strip():
+                await ensure_code(self.session, Vendor, r)
+        rows = sorted(rows, key=lambda r: (r.name or "").lower())
         return [_partner_dict(r) for r in rows]
 
-    async def create_vendor(self, *, unit_usaha_id: str, name: str, contact: Optional[str], address: Optional[str], code: Optional[str] = None) -> dict[str, Any]:
+    async def create_vendor(self, *, unit_usaha_id: str, name: str, contact: Optional[str], address: Optional[str]) -> dict[str, Any]:
         if not name.strip():
             raise ValueError("nama pemasok wajib diisi")
-        row = Vendor(unit_usaha_id=unit_usaha_id, name=name.strip(), contact=contact, address=address,
-                     code=(code or "").strip().upper() or None)
+        row = Vendor(unit_usaha_id=unit_usaha_id, name=name.strip(), contact=contact, address=address)
         self.session.add(row)
         await self.session.flush()
+        await ensure_code(self.session, Vendor, row)  # kode otomatis, tidak bisa diedit
         return _partner_dict(row)
 
     async def update_vendor(
         self, vendor_id: str, *, name: Optional[str] = None, contact: Optional[str] = None,
-        address: Optional[str] = None, is_active: Optional[bool] = None, code: Optional[str] = None,
+        address: Optional[str] = None, is_active: Optional[bool] = None,
     ) -> dict[str, Any]:
         row = await self.session.get(Vendor, vendor_id)
         if not row:
@@ -108,31 +113,34 @@ class InventoryTradeMixin:
             row.address = address
         if is_active is not None:
             row.is_active = is_active
-        if code is not None:
-            row.code = code.strip().upper() or None
+
         await self.session.flush()
         return _partner_dict(row)
 
     # ---- Customers ----
     async def list_customers(self, *, unit_usaha_id: Optional[str] = None) -> list[dict[str, Any]]:
-        stmt = select(Customer).order_by(Customer.name.asc())
+        stmt = select(Customer).order_by(Customer.created_at.asc(), Customer.id.asc())
         if unit_usaha_id:
             stmt = stmt.where(Customer.unit_usaha_id == unit_usaha_id)
         rows = (await self.session.scalars(stmt)).all()
+        for r in rows:  # isi kode mitra lama yang belum punya kode (urut pembuatan)
+            if not (r.code or "").strip():
+                await ensure_code(self.session, Customer, r)
+        rows = sorted(rows, key=lambda r: (r.name or "").lower())
         return [_partner_dict(r) for r in rows]
 
-    async def create_customer(self, *, unit_usaha_id: str, name: str, contact: Optional[str], address: Optional[str], code: Optional[str] = None) -> dict[str, Any]:
+    async def create_customer(self, *, unit_usaha_id: str, name: str, contact: Optional[str], address: Optional[str]) -> dict[str, Any]:
         if not name.strip():
             raise ValueError("nama pelanggan wajib diisi")
-        row = Customer(unit_usaha_id=unit_usaha_id, name=name.strip(), contact=contact, address=address,
-                     code=(code or "").strip().upper() or None)
+        row = Customer(unit_usaha_id=unit_usaha_id, name=name.strip(), contact=contact, address=address)
         self.session.add(row)
         await self.session.flush()
+        await ensure_code(self.session, Customer, row)  # kode otomatis, tidak bisa diedit
         return _partner_dict(row)
 
     async def update_customer(
         self, customer_id: str, *, name: Optional[str] = None, contact: Optional[str] = None,
-        address: Optional[str] = None, is_active: Optional[bool] = None, code: Optional[str] = None,
+        address: Optional[str] = None, is_active: Optional[bool] = None,
     ) -> dict[str, Any]:
         row = await self.session.get(Customer, customer_id)
         if not row:
@@ -145,8 +153,7 @@ class InventoryTradeMixin:
             row.address = address
         if is_active is not None:
             row.is_active = is_active
-        if code is not None:
-            row.code = code.strip().upper() or None
+
         await self.session.flush()
         return _partner_dict(row)
 

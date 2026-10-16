@@ -151,6 +151,31 @@ def _assert_not_bagi_hasil(reference: Optional[str]) -> None:
 
 
 
+TX_SORT_COLUMNS = {
+    "date": Transaction.date,
+    "description": Transaction.description,
+    "debit_account_code": Transaction.debit_account_code,
+    "credit_account_code": Transaction.credit_account_code,
+    "amount": Transaction.amount,
+}
+
+
+def _tx_order(sort_by: Optional[str], sort_dir: Optional[str]) -> list:
+    """Urutan daftar transaksi lintas halaman. Kolom whitelist; nilai kosong selalu
+    di bawah (seperti useSort FE); tiebreak stabil created_at lalu id."""
+    if not isinstance(sort_by, str) or not sort_by:
+        return [Transaction.date.desc(), Transaction.created_at.desc(), Transaction.id.desc()]
+    col = TX_SORT_COLUMNS.get(sort_by)
+    if col is None:
+        raise HTTPException(status_code=422, detail=f"sort_by tidak valid: {sort_by}")
+    desc = isinstance(sort_dir, str) and sort_dir.lower() == "desc"
+    is_str = sort_by in ("description", "debit_account_code", "credit_account_code")
+    empty = (func.coalesce(func.trim(col), "") == "") if is_str else col.is_(None)
+    tie = Transaction.created_at.desc() if desc else Transaction.created_at.asc()
+    tid = Transaction.id.desc() if desc else Transaction.id.asc()
+    return [empty.asc(), col.desc() if desc else col.asc(), tie, tid]
+
+
 @router.get("/transactions")
 async def list_transactions(
     response: Response,
@@ -160,6 +185,8 @@ async def list_transactions(
     reference: Optional[str] = None,
     limit: int = Query(DEFAULT_TX_LIMIT, ge=1, le=MAX_TX_LIMIT),
     offset: int = Query(0, ge=0),
+    sort_by: Optional[str] = Query(None, description="date|description|debit_account_code|credit_account_code|amount"),
+    sort_dir: Optional[str] = Query(None, pattern="^(asc|desc)$"),
     meta: bool = Query(
         False,
         description=(
@@ -186,6 +213,7 @@ async def list_transactions(
       - "" or "__null__" → BUMDES pusat only (unit_usaha_id IS NULL), same as export
       - real id → that unit only
     """
+    order = _tx_order(sort_by, sort_dir)
     filters = []
     start = parse_date(start_date)
     end = parse_date(end_date)
@@ -215,7 +243,7 @@ async def list_transactions(
 
     stmt = (
         select(Transaction)
-        .order_by(Transaction.date.desc(), Transaction.created_at.desc())
+        .order_by(*order)
         .offset(offset)
         .limit(limit)
     )

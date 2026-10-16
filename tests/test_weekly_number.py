@@ -12,7 +12,9 @@ def test_nomor_dan_periode_mingguan():
     assert doc_number("PO", "Mandala", date(2026, 10, 7), 2, "mdl") == "PO-MDL-M1-002/X/2026"
 
 
-def test_urutan_dari_nomor_terbit():
-    from modules.siabumdes.inventory.application.weekly_number import SEQ_RE
+def test_isi_minggu_berdasarkan_tanggal_transaksi():
+    from modules.siabumdes.inventory.application.weekly_number import in_week
 
-    assert int(SEQ_RE.search("INV-MDL-M1-002/X/2026").group(1)) == 2
+    wk = date(2026, 10, 5)
+    assert in_week(date(2026, 10, 10), wk) and in_week(date(2026, 10, 11), wk)  # Sabtu & Minggu
+    assert not in_week(date(2026, 10, 12), wk) and not in_week(date(2026, 10, 4), wk)

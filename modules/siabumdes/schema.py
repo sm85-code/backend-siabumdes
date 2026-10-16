@@ -65,6 +65,11 @@ _POST_DDL = [
     # Belanja Modal Awal: pemasok opsional.
     ("ALTER TABLE inventory_purchases ALTER COLUMN vendor_id DROP NOT NULL",
      "allow inventory_purchases.vendor_id NULL"),
+    # Nomor INV/PO tetap per mitra per minggu: dokumen terbit boleh bernomor sama.
+    ("ALTER TABLE inventory_documents DROP CONSTRAINT IF EXISTS inventory_documents_number_key",
+     "drop unique inventory_documents.number"),
+    ("CREATE INDEX IF NOT EXISTS ix_inventory_documents_number ON inventory_documents (number)",
+     "index inventory_documents.number"),
 ]
 
 

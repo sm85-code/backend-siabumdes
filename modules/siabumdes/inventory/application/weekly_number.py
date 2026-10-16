@@ -16,6 +16,11 @@ def week_of(d: date) -> tuple[date, int]:
     return monday, (monday.day - 1) // 7 + 1
 
 
+def in_week(tx_date: date, any_day: date) -> bool:
+    """Transaksi tanggal tx_date termasuk minggu any_day (Senin–Minggu)."""
+    return week_of(tx_date)[0] == week_of(any_day)[0]
+
+
 def week_label(d: date) -> str:
     monday, n = week_of(d)
     sat = monday + timedelta(days=5)

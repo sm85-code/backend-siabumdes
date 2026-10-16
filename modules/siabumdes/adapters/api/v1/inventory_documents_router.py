@@ -2,7 +2,7 @@
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Literal, Optional
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -331,6 +331,8 @@ async def preview(body: DocumentIn, user=Depends(require_inventory_user), sessio
 class TransactionsPdfIn(BaseModel):
     kind: Literal["invoice", "po"]
     source_ids: list[str] = Field(min_length=1, max_length=500)
+    # Tanggal mana pun dalam minggu (Senin–Minggu). Hanya transaksi bertanggal di minggu itu yang dipakai.
+    week: Optional[date] = None
 
 
 @router.post("/transactions-pdf")
@@ -339,23 +341,29 @@ async def transactions_pdf(body: TransactionsPdfIn, user=Depends(require_invento
     unit = await scoped_unit(session, user)
     src_kind = "invoice" if body.kind == "invoice" else "purchase_statement"
     model, _, partner_field = KINDS[src_kind]
+    from modules.siabumdes.inventory.application.weekly_number import in_week, weekly_meta
+
     rows = (await session.execute(
-        select(getattr(model, partner_field), StockCard.movement_date)
+        select(getattr(model, partner_field), StockCard.movement_date, model.id)
         .join(StockCard, model.stock_card_id == StockCard.id)
         .where(model.id.in_(body.source_ids))
     )).all()
     partners = {r[0] for r in rows}
     if len(rows) != len(set(body.source_ids)) or len(partners) != 1 or None in partners:
         raise HTTPException(422, "Transaksi harus milik satu mitra yang sama")
+    if body.week:
+        # Isi minggu lampau tetap: hanya berdasarkan tanggal transaksi, bukan tanggal unduh.
+        rows = [r for r in rows if in_week(r[1], body.week)]
+        if not rows:
+            raise HTTPException(422, "Tidak ada transaksi pada minggu tersebut")
     dates = [r[1] for r in rows]
+    ids = {r[2] for r in rows}
     doc = DocumentIn(kind=src_kind, partner_id=partners.pop(), period_start=min(dates), period_end=max(dates),
-                     source_ids=list(dict.fromkeys(body.source_ids)))
+                     source_ids=[i for i in dict.fromkeys(body.source_ids) if i in ids])
     snapshot = await build_snapshot(session, doc, unit, branding_from_org_profile(await get_org_profile(session)),
                                     allow_issued=True)
     snapshot["kind"] = body.kind
-    from modules.siabumdes.inventory.application.weekly_number import weekly_meta
-
-    snapshot.update(await weekly_meta(session, body.kind, unit.id, doc.partner_id, doc.period_end, doc.source_ids))
+    snapshot.update(await weekly_meta(session, body.kind, unit.id, doc.partner_id, body.week or doc.period_end))
     return await pdf_response(snapshot)
 
 

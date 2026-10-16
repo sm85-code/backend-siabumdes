@@ -335,6 +335,31 @@ class TransactionsPdfIn(BaseModel):
     week: Optional[date] = None
 
 
+class WeeklyNumbersIn(BaseModel):
+    kind: Literal["invoice", "po"]
+    partner_id: str
+    dates: list[date] = Field(min_length=1, max_length=60)
+
+
+@router.post("/weekly-numbers")
+async def weekly_numbers(body: WeeklyNumbersIn, user=Depends(require_inventory_user), session=Depends(get_db)):
+    """Nomor INV/PO mingguan (tetap per mitra per minggu) untuk tanggal transaksi: {tanggal: nomor}."""
+    from modules.siabumdes.inventory.application.weekly_number import week_of, weekly_meta
+
+    unit = await scoped_unit(session, user)
+    partner = await session.get(Customer if body.kind == "invoice" else Vendor, body.partner_id)
+    if not partner or partner.unit_usaha_id != unit.id:
+        raise HTTPException(404, "Mitra tidak ditemukan")
+    by_week: dict[date, str] = {}
+    result = {}
+    for d in body.dates:
+        monday = week_of(d)[0]
+        if monday not in by_week:
+            by_week[monday] = (await weekly_meta(session, body.kind, unit.id, body.partner_id, d))["number"]
+        result[d.isoformat()] = by_week[monday]
+    return result
+
+
 @router.post("/transactions-pdf")
 async def transactions_pdf(body: TransactionsPdfIn, user=Depends(require_inventory_user), session=Depends(get_db)):
     """Unduh Invoice (penjualan) / PO (pembelian) langsung dari transaksi, tanpa menerbitkan dokumen."""

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import calendar
 import re
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Literal, Optional
 
@@ -288,3 +288,19 @@ async def neraca(
         "opening_date": OPENING_DATE.isoformat(),
         "positions": [{"date": d.isoformat(), **{k: str(v) for k, v in position_with_opening(data, d).items()}} for d in dates],
     }
+
+
+@router.get("/journal")
+async def journal(
+    period: str = Query(...),
+    _: User = Depends(require_toko_user),
+    session: AsyncSession = Depends(get_db),
+):
+    """Transaksi manual menu Transaksi unit UU05 pada periode (dibaca Perduitan #1/#2/#3)."""
+    from modules.siabumdes.toko.application.journal import load_journal
+
+    _check_period(period)
+    y, m = map(int, period.split("-"))
+    start = date(y, m, 1)
+    end = date(y + (m == 12), m % 12 + 1, 1) - timedelta(days=1)
+    return [r.out() for r in await load_journal(session, start, end)]

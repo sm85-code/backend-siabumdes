@@ -2,7 +2,8 @@
 from datetime import date
 from decimal import Decimal as D
 
-from modules.siabumdes.toko.application.neraca import MODAL, OPENING, OPENING_DATE, Data, Trade, position, position_with_opening
+from modules.siabumdes.toko.application.journal import JournalRow, classify, is_manual
+from modules.siabumdes.toko.application.neraca import MODAL, OPENING, OPENING_DATE, Data, Trade, is_piutang_lain, position, position_with_opening
 
 
 def test_neraca_seimbang_skenario_lengkap():
@@ -50,3 +51,21 @@ def test_saldo_awal_oktober():
     q = position_with_opening(data, date(2026, 10, 12))
     assert q["piutang"] == OPENING["piutang"] - 300 and q["kas"] == OPENING["kas"] + 100 + 300 - 50
     assert q["piutang_lainnya"] == OPENING["piutang_lainnya"] + 50
+
+
+def _row(dn, dc, cn, cc, amt="500"):
+    return JournalRow("x", date(2026, 10, 10), "", D(amt), "d", dn, classify(dn, dc), "c", cn, classify(cn, cc))
+
+
+def test_transaksi_umum_dipetakan_ke_neraca():
+    assert is_piutang_lain("Penerimaan pembayaran  KASBON")
+    assert not is_manual("TOKO:1", "x") and not is_manual("", "inventory_cogs") and is_manual("", "umum")
+    lunas = _row("Kas Toko", "aset", "Piutang Lainnya", "aset")
+    assert lunas.deltas() == {"kas": D("500"), "piutang_lainnya": D("-500")} and lunas.jenis == "mutasi"
+    beban = _row("Beban Listrik", "beban", "Kas Toko", "aset")
+    assert beban.jenis == "pengeluaran" and beban.deltas() == {"laba": D("-500"), "kas": D("-500")}
+    assert _row("Kas", "aset", "Modal Disetor", "ekuitas").deltas() == {}
+    data = Data(journal=[(lunas.date, lunas.deltas()), (beban.date, beban.deltas()),
+                         (date(2026, 10, 11), _row("Utang Usaha", "kewajiban", "Kas", "aset").deltas())])
+    p = position(data, date(2026, 10, 12))
+    assert p["kas"] + p["stok"] + p["piutang"] + p["piutang_lainnya"] == p["utang"] + MODAL + p["laba"]

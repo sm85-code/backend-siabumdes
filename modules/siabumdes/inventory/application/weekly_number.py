@@ -42,26 +42,59 @@ def doc_number(prefix: str, name: str, d: date, seq: int, code: str | None = Non
     return f"{prefix}-{(code or '').strip().upper() or partner_code(name)}-M{n}-{seq:03d}/{ROMAWI[monday.month - 1]}/{monday.year}"
 
 
-async def weekly_meta(session, kind: str, unit_id: str, partner_id: str, d: date) -> dict:
-    """Nomor, tanggal dokumen (Sabtu) dan label periode untuk dokumen minggu tanggal d."""
+async def resolve_code(session, partner_model, row) -> str:
+    """Kode mitra dari field Kode (Manajemen Stok). Jika kosong, pakai Kode mitra lain
+    bernama sama di unit yang sama; baru terakhir turunan nama."""
+    from sqlalchemy import func, select
+
+    if (row.code or "").strip():
+        return row.code.strip().upper()
+    other = await session.scalar(
+        select(partner_model.code).where(
+            partner_model.unit_usaha_id == row.unit_usaha_id,
+            func.lower(func.trim(partner_model.name)) == (row.name or "").strip().lower(),
+            partner_model.code.is_not(None), partner_model.code != "",
+        ).limit(1)
+    )
+    return (other or "").strip().upper() or partner_code(row.name)
+
+
+SEQ_RE = re.compile(r"-M\d+-(\d{3,})/")
+
+
+async def weekly_meta(session, kind: str, unit_id: str, partner_id: str, d: date,
+                      source_ids: list[str] | None = None) -> dict:
+    """Nomor, tanggal dokumen (Sabtu) dan label periode untuk dokumen minggu tanggal d.
+
+    Urutan = jumlah dokumen INV/PO terbit di minggu itu + 1 (mitra sama dapat nomor berikutnya).
+    Jika transaksi sumber sudah masuk dokumen terbit, nomornya dipakai ulang.
+    """
     from sqlalchemy import select
 
-    from modules.siabumdes.inventory.infrastructure.models import Customer, Purchase, Sale, StockCard, Vendor
+    from modules.siabumdes.inventory.infrastructure.models import (
+        CommercialDocument, Customer, DocumentSource, Vendor,
+    )
 
-    model, partner_model, field = (Sale, Customer, "customer_id") if kind == "invoice" else (Purchase, Vendor, "vendor_id")
-    monday, _ = week_of(d)
-    ids = (await session.execute(
-        select(partner_model.id).distinct().join(model, getattr(model, field) == partner_model.id)
-        .join(StockCard, model.stock_card_id == StockCard.id)
-        .where(partner_model.unit_usaha_id == unit_id,
-               StockCard.movement_date >= monday, StockCard.movement_date <= monday + timedelta(days=6))
-    )).scalars().all()
-    rows = {r.id: r for r in (await session.scalars(
-        select(partner_model).where(partner_model.id.in_(list(ids) + [partner_id])))).all()}
-    order = sorted(rows, key=lambda i: ((rows[i].name or "").lower(), i))
-    p = rows[partner_id]
+    partner_model = Customer if kind == "invoice" else Vendor
+    prefix = "INV" if kind == "invoice" else "PO"
+    monday, n = week_of(d)
+    row = await session.get(partner_model, partner_id)
+    code = await resolve_code(session, partner_model, row)
+    pattern = f"{prefix}-%-M{n}-%/{ROMAWI[monday.month - 1]}/{monday.year}"
+    number = None
+    if source_ids:
+        number = await session.scalar(
+            select(CommercialDocument.number).join(DocumentSource, DocumentSource.document_id == CommercialDocument.id)
+            .where(DocumentSource.source_id.in_(source_ids), CommercialDocument.kind == kind,
+                   CommercialDocument.status != "void", CommercialDocument.number.like(pattern)).limit(1)
+        )
+    if not number:
+        used = (await session.scalars(
+            select(CommercialDocument.number).where(CommercialDocument.number.like(pattern)))).all()
+        seq = max((int(m.group(1)) for u in used if (m := SEQ_RE.search(u or ""))), default=0) + 1
+        number = doc_number(prefix, row.name, d, seq, code)
     return {
-        "number": doc_number("INV" if kind == "invoice" else "PO", p.name, d, order.index(partner_id) + 1, p.code),
+        "number": number,
         "issued_date": (monday + timedelta(days=5)).isoformat(),
         "period_label": week_label(d),
     }

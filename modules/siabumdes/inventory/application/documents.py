@@ -267,12 +267,8 @@ async def issue_document(session, body, unit, branding, actor):
         from modules.siabumdes.inventory.application.weekly_number import weekly_meta
 
         meta = await weekly_meta(session, body.kind, unit.id, body.partner_id, body.period_end)
-        base, tail = meta["number"].split("/", 1)
-        number, n = meta["number"], 1
-        while await session.scalar(select(func.count()).select_from(CommercialDocument).where(CommercialDocument.number == number)):
-            n += 1
-            number = f"{base}-{n}/{tail}"  # dokumen kedua untuk mitra yang sama di minggu itu
-        snapshot.update(meta, number=number)
+        number = meta["number"]  # urutan = dokumen ke-n minggu itu (unit dikunci saat terbit)
+        snapshot.update(meta)
         issued_date = _date.fromisoformat(meta["issued_date"])
     snapshot["number"] = number
     row = CommercialDocument(

@@ -10,3 +10,9 @@ def test_nomor_dan_periode_mingguan():
     assert doc_number("INV", "Toko Maju Jaya", date(2026, 10, 7), 1) == "INV-TMJ-M1-001/X/2026"
     assert partner_code("Mandala") == "MND"
     assert doc_number("PO", "Mandala", date(2026, 10, 7), 2, "mdl") == "PO-MDL-M1-002/X/2026"
+
+
+def test_urutan_dari_nomor_terbit():
+    from modules.siabumdes.inventory.application.weekly_number import SEQ_RE
+
+    assert int(SEQ_RE.search("INV-MDL-M1-002/X/2026").group(1)) == 2

@@ -142,3 +142,19 @@ def test_buku_besar_pembanding():
     assert _row("Kas Toko", "aset", "Prive", "ekuitas").balance_deltas() == {"kas": D("500")}
     data = Data(ledger=[(beli.date, beli.balance_deltas())])
     assert ledger_at(data, date(2026, 10, 31))["stok"] == D("9000") and ledger_at(data, date(2026, 10, 1))["stok"] == 0
+
+
+def test_stok_neraca_sama_dengan_manajemen_stok():
+    from modules.siabumdes.toko.application.neraca import manual_suspects, stok_manajemen
+    # Produk A: 10 masuk (Sep), 3 keluar (Okt) -> qty 7 @1000; produk B tanpa kartu stok: qty 5 @2000.
+    data = Data(products={"a": (7, D("1000")), "b": (5, D("2000"))},
+                moves=[(date(2026, 9, 2), "a", 10), (date(2026, 10, 14), "a", -3)],
+                journal=[(date(2026, 9, 5), {"stok": D("-500"), "kas": D("500")})])
+    today = stok_manajemen(data)
+    assert today == D("17000")
+    assert position_with_opening(data, date(2026, 10, 18))["stok"] == today
+    assert position_with_opening(data, date(2026, 10, 11))["stok"] == D("20000")
+    salah = _row("Kas", "aset", "Persediaan Barang", "aset", "500")
+    data.manual_rows = [salah]
+    assert [r["nominal"] for r in manual_suspects(data, date(2026, 10, 18), "stok")] == ["500"]
+    assert manual_suspects(data, date(2026, 10, 18), "utang") == []

@@ -285,7 +285,7 @@ async def neraca(
     period (YYYY-MM) menentukan pemisahan Laba/Rugi Periode Lalu vs Berjalan;
     tanpa period dipakai bulan dari masing-masing tanggal."""
     from modules.siabumdes.toko.application.neraca import (
-        MODAL, OPENING_DATE, kas_breakdown, laba_split, ledger_at, load, modal_at, position_with_opening,
+        MODAL, OPENING_DATE, kas_breakdown, laba_split, ledger_at, load, manual_suspects, modal_at, position_with_opening, stok_manajemen,
     )
 
     if period:
@@ -303,8 +303,13 @@ async def neraca(
             "laba_berjalan": str(berjalan),
             "kas_detail": {k: str(v) for k, v in kas_breakdown(data, d).items()},
             "ledger": {k: str(v) for k, v in ledger_at(data, d).items()},
+            # Transaksi manual yang mengenai pos ini (dugaan penyebab selisih vs menu Transaksi).
+            "manual_suspects": {k: manual_suspects(data, d, k) for k in ("stok", "kas", "piutang", "piutang_lainnya", "utang")},
         })
-    return {"modal": str(MODAL), "opening_date": OPENING_DATE.isoformat(), "positions": out}
+    return {
+        "modal": str(MODAL), "opening_date": OPENING_DATE.isoformat(), "positions": out,
+        "stok_manajemen": str(stok_manajemen(data)),  # nilai Manajemen Stok hari ini
+    }
 
 
 @router.get("/journal")

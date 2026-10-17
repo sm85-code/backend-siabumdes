@@ -67,6 +67,12 @@ class Data:
     modal: list[tuple[date, Decimal]] = field(default_factory=list)
     # Buku besar lengkap Unit 5 (semua transaksi menu Transaksi, termasuk otomatis), untuk pembanding.
     ledger: list[tuple[date, dict[str, Decimal]]] = field(default_factory=list)
+    # Manajemen Stok (sumber kebenaran Stok): produk {id: (qty_on_hand, cost_price)} dan
+    # mutasi qty per produk (tanggal, product_id, +masuk/-keluar/penyesuaian).
+    products: dict[str, tuple[int, Decimal]] = field(default_factory=dict)
+    moves: list[tuple[date, str, int]] = field(default_factory=list)
+    # Transaksi manual menu Transaksi (semua tanggal) untuk daftar dugaan penyebab selisih.
+    manual_rows: list = field(default_factory=list)
 
 
 # Item Perduitan yang namanya memuat kata ini dicatat sebagai Piutang Lainnya (bukan laba).
@@ -123,8 +129,14 @@ def position_with_opening(data: Data, d: date) -> dict[str, Decimal]:
     if d > OPENING_DATE:
         j["kas"] = journal_sum(data, d, KAS_JOURNAL_START_AFTER_OPENING)["kas"]
     out = _base_position(data, d)
-    for k in ("kas", "piutang", "piutang_lainnya", "utang", "stok"):
+    for k in ("kas", "piutang", "piutang_lainnya", "utang"):
         out[k] += j[k]
+    if data.products:
+        # Stok = Manajemen Stok per tanggal. Jurnal Persediaan manual tidak ditambahkan; selisihnya
+        # terhadap menu Transaksi ditampilkan di catatan perbedaan data.
+        out["stok"] = stok_manajemen(data, d)
+    else:
+        out["stok"] += j["stok"]
     out["laba"] += j["laba"] if d <= OPENING_DATE else journal_sum(data, d, date(2026, 10, 1))["laba"]
     return out
 
@@ -152,6 +164,28 @@ LEDGER_KEYS = ("kas", "stok", "piutang", "piutang_lainnya", "utang", "modal")
 def ledger_at(data: Data, d: date) -> dict[str, Decimal]:
     """Saldo akun menu Transaksi (Unit 5) s.d. d, dipetakan ke pos Neraca."""
     return {k: sum((x.get(k, ZERO) for t, x in data.ledger if t <= d), ZERO) for k in LEDGER_KEYS}
+
+
+def stok_manajemen(data: Data, d: date | None = None) -> Decimal:
+    """Nilai persediaan seperti Manajemen Stok (qty × HPP produk saat ini), mundur ke tanggal d
+    dengan membatalkan mutasi kartu stok/penyesuaian sesudah d. d=None: nilai hari ini."""
+    after: dict[str, int] = {}
+    if d is not None:
+        for t, pid, q in data.moves:
+            if t > d:
+                after[pid] = after.get(pid, 0) + q
+    return sum((cost * (qty - after.get(pid, 0)) for pid, (qty, cost) in data.products.items()), ZERO)
+
+
+def manual_suspects(data: Data, d: date, pos: str, limit: int = 10) -> list[dict]:
+    """Transaksi manual menu Transaksi s.d. d yang mengenai pos ini (terbesar dulu)."""
+    rows = [r for r in data.manual_rows if r.date <= d and pos in (r.debit_pos, r.credit_pos)]
+    rows.sort(key=lambda r: r.amount, reverse=True)
+    return [{
+        "id": r.id, "tanggal": r.date.isoformat(), "reference": r.reference, "keterangan": r.description,
+        "debit": f"{r.debit_code} {r.debit_name}".strip(), "credit": f"{r.credit_code} {r.credit_name}".strip(),
+        "nominal": str(r.amount),
+    } for r in rows[:limit]]
 
 
 def modal_before_journal(data: Data) -> Decimal:
@@ -228,6 +262,12 @@ async def load(session) -> Data:
     )).all():
         # Nilai penyesuaian tidak disimpan; pakai HPP produk (sama seperti jurnal penyesuaian).
         data.adjustments.append((a.adjustment_date, Decimal(cost) * a.quantity_delta))
+    for p in (await session.scalars(select(Product))).all():
+        data.products[p.id] = (int(p.qty_on_hand or 0), Decimal(p.cost_price or 0))
+    for c in (await session.scalars(select(StockCard).where(StockCard.finance_status != "cancelled"))).all():
+        data.moves.append((c.movement_date, c.product_id, c.quantity if c.direction == "in" else -c.quantity))
+    for a in (await session.scalars(select(StockAdjustment))).all():
+        data.moves.append((a.adjustment_date, a.product_id, a.quantity_delta))
     for e, jenis, name in (await session.execute(
         select(TokoEntry, TokoItem.jenis, TokoItem.name).join(TokoItem, TokoEntry.item_id == TokoItem.id)
     )).all():
@@ -240,6 +280,7 @@ async def load(session) -> Data:
         if row.balance_deltas():
             data.ledger.append((row.date, row.balance_deltas()))
     for row in await load_journal(session, clamp=False):
+        data.manual_rows.append(row)
         if row.modal_delta:
             data.modal.append((row.date, row.modal_delta))
         if row.date >= JOURNAL_START and row.deltas():

@@ -74,6 +74,7 @@ class JournalRow:
     credit_code: str
     credit_name: str
     credit_pos: str | None
+    reference: str = ""
 
     @property
     def counted(self) -> bool:
@@ -117,7 +118,7 @@ class JournalRow:
 
     def out(self) -> dict:
         return {
-            "id": self.id, "tanggal": self.date.isoformat(), "keterangan": self.description,
+            "id": self.id, "tanggal": self.date.isoformat(), "keterangan": self.description, "reference": self.reference,
             "nominal": str(self.amount), "jenis": self.jenis, "counted": self.counted,
             "debit": {"code": self.debit_code, "name": self.debit_name, "pos": self.debit_pos},
             "credit": {"code": self.credit_code, "name": self.credit_name, "pos": self.credit_pos},
@@ -154,5 +155,6 @@ async def load_journal(
             t.id, t.date, t.description or "", Decimal(t.amount),
             t.debit_account_code, d.name if d else "", classify(d.name, d.category, d.subcategory) if d else None,
             t.credit_account_code, c.name if c else "", classify(c.name, c.category, c.subcategory) if c else None,
+            t.reference or "",
         ))
     return rows

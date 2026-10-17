@@ -29,7 +29,7 @@ ZERO = Decimal("0")
 # laba = akumulasi sejak 1 Oktober 2026. Tanggal s.d. OPENING_DATE tetap seperti dulu.
 OPENING_DATE = date(2026, 9, 30)
 OPENING = {
-    "kas": Decimal("2124500"),
+    "kas": ZERO,  # saldo awal 2.124.500 diabaikan (permintaan pengguna)
     "piutang": ZERO,  # saldo awal piutang 8.392.000 diabaikan (permintaan pengguna)
     "piutang_lainnya": ZERO,  # saldo awal 9.700.000 diabaikan (permintaan pengguna)
     "stok": Decimal("9783500"),

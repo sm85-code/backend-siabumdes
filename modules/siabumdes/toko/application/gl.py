@@ -144,12 +144,16 @@ def position(rows: list[JournalRow], d: date, period: str) -> dict[str, Decimal]
     """Neraca per tanggal d: saldo akun Unit 5; Laba/Rugi Periode Lalu = s.d. sehari sebelum
     Senin Minggu ke-1 periode, Periode Berjalan = sejak Senin Minggu ke-1 s.d. d."""
     start = first_monday(period) - timedelta(days=1)
+    # Saldo awal laba ditahan per 30 Sep 2026 = 0 (sejalan saldo awal Kas 2.124.500): sesudah tanggal itu
+    # laba hanya dihitung sejak 1 Okt 2026.
+    since = KAS_OPENING_DATE if d > KAS_OPENING_DATE else None
+    berjalan_after = max(start, since) if since else start
     return {**balances_at(rows, d), "kas": kas_at(rows, d),
-            "laba_lalu": laba_at(rows, min(start, d)) - distributed_at(rows, d),
-            "laba_berjalan": laba_at(rows, d, after=start) if d > start else ZERO}
+            "laba_lalu": laba_at(rows, min(start, d), after=since) - distributed_at(rows, d, after=since),
+            "laba_berjalan": laba_at(rows, d, after=berjalan_after) if d > berjalan_after else ZERO}
 
 
-def distributed_at(rows: list[JournalRow], d: date) -> Decimal:
+def distributed_at(rows: list[JournalRow], d: date, after: date | None = None) -> Decimal:
     """Laba yang sudah dibagikan (bagi hasil/imbal hasil) s.d. d, dari sisi pos Neraca jurnalnya.
 
     Pembagian laba bukan beban (tidak masuk Laba Rugi), tetapi mengurangi saldo laba: kas yang keluar
@@ -157,7 +161,7 @@ def distributed_at(rows: list[JournalRow], d: date) -> Decimal:
     bagi hasil yang dibayar. Nilai = penurunan (aset − utang − modal) akibat jurnal tsb."""
     out = ZERO
     for r in rows:
-        if r.date <= d and not is_closing(r) and is_profit_distribution(r):
+        if r.date <= d and (after is None or r.date > after) and not is_closing(r) and is_profit_distribution(r):
             for k, v in r.balance_deltas().items():
                 out -= v if k in ("kas", "stok", "piutang", "piutang_lainnya") else -v
     return out

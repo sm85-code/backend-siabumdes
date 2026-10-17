@@ -5,9 +5,8 @@ UU05 (unit 5 / toko). Pengelola unit lain ditolak 403.
 """
 from __future__ import annotations
 
-import calendar
 import re
-from datetime import date, timedelta
+from datetime import date
 from decimal import Decimal
 from typing import Literal, Optional
 
@@ -25,6 +24,7 @@ from modules.siabumdes.application.toko_transactions import (
 )
 from modules.siabumdes.identity.infrastructure.models import User
 from modules.siabumdes.infrastructure.models import Transaction, UnitUsaha
+from modules.siabumdes.toko.application.weeks import first_monday, period_range, trade_week, week_count, week_range
 from modules.siabumdes.toko.infrastructure.models import TokoEntry, TokoItem
 from shared.config import public_role
 from shared.database import get_db
@@ -67,11 +67,8 @@ def _check_period(period: str) -> str:
 
 
 def week5_has_saturday(period: str) -> bool:
-    """Minggu ke-1 = tgl 1 s.d. Sabtu pertama; True bila Sabtu minggu ke-5 masih di bulan ini."""
-    y, m = (int(x) for x in period.split("-"))
-    last = calendar.monthrange(y, m)[1]
-    first_saturday = 1 + (5 - date(y, m, 1).weekday()) % 7  # weekday(): Senin=0, Sabtu=5
-    return first_saturday + 28 <= last
+    """True bila periode punya Minggu ke-5 (Senin ke-5 masih di bulan ini; lihat toko.application.weeks)."""
+    return week_count(period) >= 5
 
 
 def item_out(item: TokoItem, has_entries: bool = False) -> dict:
@@ -232,10 +229,13 @@ async def upsert_entry(
     session: AsyncSession = Depends(get_db),
 ):
     _check_period(body.period)
-    if body.tanggal.strftime("%Y-%m") != body.period:
+    if body.week > week_count(body.period):
+        raise HTTPException(status_code=422, detail=f"Periode {body.period} hanya punya {week_count(body.period)} minggu.")
+    start, end = week_range(body.period, body.week)
+    if not start <= body.tanggal <= end:
         raise HTTPException(
             status_code=422,
-            detail="Tanggal transaksi harus berada dalam periode bulan yang dipilih.",
+            detail=f"Tanggal transaksi Minggu ke-{body.week} harus antara {start.isoformat()} dan {end.isoformat()} (Senin–Sabtu, Minggu ikut).",
         )
     item = await session.get(TokoItem, body.item_id)
     if not item:
@@ -293,7 +293,8 @@ async def neraca(
     data = await load(session)
     out = []
     for d in dates:
-        start = date(*map(int, period.split("-")), 1) if period else d.replace(day=1)
+        # Periode berjalan dimulai Senin Minggu ke-1 (minggu Senin–Sabtu).
+        start = first_monday(period or trade_week(d)[0])
         lalu, berjalan = laba_split(data, d, start)
         out.append({
             "date": d.isoformat(),
@@ -323,7 +324,6 @@ async def journal(
     from modules.siabumdes.toko.application.journal import load_journal
 
     _check_period(period)
-    y, m = map(int, period.split("-"))
-    start = date(y, m, 1)
-    end = date(y + (m == 12), m % 12 + 1, 1) - timedelta(days=1)
+    # Senin Minggu ke-1 s.d. akhir minggu terakhir (1–4 Okt 2026 ikut periode Sep).
+    start, end = period_range(period)
     return [r.out() for r in await load_journal(session, start, end)]

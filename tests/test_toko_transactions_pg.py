@@ -14,7 +14,7 @@ from sqlalchemy import func, select  # noqa: E402
 
 from modules.siabumdes.adapters.api.v1 import toko_router as tr  # noqa: E402
 from modules.siabumdes.adapters.api.v1.transaction_router import _assert_not_bagi_hasil  # noqa: E402
-from modules.siabumdes.application.toko_transactions import backfill_toko_transactions, ensure_toko_types  # noqa: E402
+from modules.siabumdes.application.toko_transactions import backfill_toko_transactions, ensure_toko_types, reweek_toko_entries  # noqa: E402
 from modules.siabumdes.infrastructure.models import Account, JournalEntry, Transaction, TransactionType  # noqa: E402
 from modules.siabumdes.toko.infrastructure.models import TokoEntry, TokoItem  # noqa: E402
 
@@ -53,11 +53,11 @@ async def test_entry_lifecycle_syncs_unit5_transaction(toko_context):
 
     item = await tr.create_item(tr.ItemCreateBody(name='Penjualan Sembako', jenis='pemasukan'), manager, s)
     out = await tr.upsert_entry(tr.EntryUpsertBody(item_id=item['id'], period='2026-10', week=2,
-                                                   tanggal=date(2026, 10, 10), nominal=Decimal('1500000')), manager, s)
+                                                   tanggal=date(2026, 10, 17), nominal=Decimal('1500000')), manager, s)
     tx = await session.get(Transaction, out['transaction_id'])
     assert tx.unit_usaha_id == unit.id and tx.transaction_type == 'pendapatan_usaha_unit5'
     assert tx.description == 'Pendapatan Penjualan Sembako - Minggu 2 - 10/2026'
-    assert tx.amount == Decimal('1500000') and tx.date == date(2026, 10, 10)
+    assert tx.amount == Decimal('1500000') and tx.date == date(2026, 10, 17)
     assert tx.reference == f"TOKO:{out['id']}"
     assert await session.scalar(select(func.count(JournalEntry.id)).where(JournalEntry.transaction_id == tx.id)) == 1
     with pytest.raises(HTTPException):
@@ -97,3 +97,30 @@ async def test_backfill_links_legacy_entries(toko_context):
     tx = await session.get(Transaction, entry.transaction_id)
     assert tx.description == 'Pengeluaran Listrik - Minggu 1 - 09/2026'
     assert await backfill_toko_transactions(session) == 0
+
+
+@pytest.mark.asyncio
+async def test_reweek_moves_and_merges_legacy_entries(toko_context):
+    session, admin, _, _, unit, *_ = toko_context
+    await _setup(session, unit)
+    item = TokoItem(name='Saldo', jenis='pemasukan')
+    session.add(item)
+    await session.flush()
+    # Minggu lama (tgl 1 s.d. Sabtu pertama): Sep w5 = 28–30 Sep, Okt w1 = 1–3 Okt, Okt w2 = 4–10 Okt.
+    a = TokoEntry(item_id=item.id, period='2026-09', week=5, tanggal=date(2026, 9, 29), nominal=Decimal('100'))
+    b = TokoEntry(item_id=item.id, period='2026-10', week=1, tanggal=date(2026, 10, 2), nominal=Decimal('50'))
+    c = TokoEntry(item_id=item.id, period='2026-10', week=2, tanggal=date(2026, 10, 8), nominal=Decimal('70'))
+    session.add_all([a, b, c])
+    await session.flush()
+    assert await backfill_toko_transactions(session) == 3
+    b_tx = b.transaction_id
+    assert await reweek_toko_entries(session) == (2, 1)
+    rows = {(e.period, e.week): e for e in (await session.execute(select(TokoEntry))).scalars()}
+    assert set(rows) == {('2026-09', 4), ('2026-10', 1)}
+    sep = rows[('2026-09', 4)]
+    assert sep.nominal == Decimal('150') and sep.tanggal == date(2026, 10, 2)
+    tx = await session.get(Transaction, sep.transaction_id)
+    assert tx.amount == Decimal('150') and tx.description == 'Pendapatan Saldo - Minggu 4 - 09/2026'
+    assert await session.get(Transaction, b_tx) is None
+    assert (await session.get(Transaction, rows[('2026-10', 1)].transaction_id)).description == 'Pendapatan Saldo - Minggu 1 - 10/2026'
+    assert await reweek_toko_entries(session) == (0, 0)

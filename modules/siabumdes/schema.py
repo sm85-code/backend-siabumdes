@@ -53,6 +53,8 @@ _ADD_COLUMNS = [
     ("stock_cards", "sell_price", "NUMERIC(20,2)"),
     ("inventory_vendors", "code", "VARCHAR(16)"),
     ("inventory_customers", "code", "VARCHAR(16)"),
+    ("stock_cards", "doc_number", "VARCHAR(64)"),
+    ("stock_cards", "doc_unit_id", "VARCHAR(36)"),
 ]
 
 # DDL lanjutan setelah _ADD_COLUMNS (idempoten, tanpa menghapus data).
@@ -70,6 +72,9 @@ _POST_DDL = [
      "drop unique inventory_documents.number"),
     ("CREATE INDEX IF NOT EXISTS ix_inventory_documents_number ON inventory_documents (number)",
      "index inventory_documents.number"),
+    # Nomor nota otomatis Stock In/Out: unik per unit.
+    ("CREATE UNIQUE INDEX IF NOT EXISTS uq_stock_cards_doc_number ON stock_cards (doc_unit_id, doc_number) "
+     "WHERE doc_number IS NOT NULL", "unique stock_cards.doc_number per unit"),
 ]
 
 

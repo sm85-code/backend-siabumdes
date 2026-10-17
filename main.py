@@ -49,6 +49,13 @@ async def lifespan(_: FastAPI):
         await seed_if_needed()
     except Exception:
         logger.exception("startup schema/seed failed — app continues")
+    try:
+        from modules.siabumdes.inventory.application.receipt_number import backfill_receipt_numbers
+        from shared.database import SessionLocal
+
+        await backfill_receipt_numbers(SessionLocal)
+    except Exception:
+        logger.exception("backfill nomor nota gagal — app continues")
     yield
 
 

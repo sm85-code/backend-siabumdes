@@ -66,4 +66,4 @@ jobs:
           # skips itself instead of running.
           POSTGRES_SSL: "false"
           RISKA_TEST_DATABASE_URL: postgresql+asyncpg://siabumdes:siabumdes@localhost:5432/siabumdes_test
-        run: python -m pytest tests/test_postgresql_integration.py tests/test_b1_stock_atomicity.py tests/test_riska_execution_pg.py tests/test_riska_dialogue_pg.py tests/test_riska_crud_pg.py tests/test_riska_agent_pg.py tests/test_toko_transactions_pg.py tests/test_stock_out_internal_use.py -n 0
+        run: python -m pytest tests/test_postgresql_integration.py tests/test_b1_stock_atomicity.py tests/test_riska_execution_pg.py tests/test_riska_dialogue_pg.py tests/test_riska_crud_pg.py tests/test_riska_agent_pg.py tests/test_toko_transactions_pg.py tests/test_stock_out_internal_use.py tests/test_receipt_number_pg.py -n 0

@@ -344,7 +344,8 @@ class WeeklyNumbersIn(BaseModel):
 @router.post("/weekly-numbers")
 async def weekly_numbers(body: WeeklyNumbersIn, user=Depends(require_inventory_user), session=Depends(get_db)):
     """Nomor INV/PO mingguan (tetap per mitra per minggu) untuk tanggal transaksi: {tanggal: nomor}."""
-    from modules.siabumdes.inventory.application.weekly_number import week_of, weekly_meta
+    from modules.siabumdes.inventory.application.receipt_number import weekly_number_preview
+    from modules.siabumdes.inventory.application.weekly_number import week_of
 
     unit = await scoped_unit(session, user)
     partner = await session.get(Customer if body.kind == "invoice" else Vendor, body.partner_id)
@@ -355,7 +356,8 @@ async def weekly_numbers(body: WeeklyNumbersIn, user=Depends(require_inventory_u
     for d in body.dates:
         monday = week_of(d)[0]
         if monday not in by_week:
-            by_week[monday] = (await weekly_meta(session, body.kind, unit.id, body.partner_id, d))["number"]
+            # Hanya membaca (tidak memesan urutan); urutan dipesan saat nota disimpan/dokumen terbit.
+            by_week[monday] = await weekly_number_preview(session, body.kind, unit.id, partner, d)
         result[d.isoformat()] = by_week[monday]
     return result
 

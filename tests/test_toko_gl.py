@@ -47,10 +47,15 @@ def test_neraca_saldo_akun_dan_laba():
     assert p["stok"] == 400 - 200 - 20
     assert p["laba_lalu"] == 150  # s.d. 4 Okt
     assert p["laba_berjalan"] == 1000 + 70 + 300 - 200 - 20 - 90 - 15
-    kas = 30_000_000 + 150 + 1000 + 70 - 400 + 300 - 90 - 15 - 40 - 10
+    # Kas = 2.124.500 (30 Sep) + pergerakan Kas sejak 1 Okt; jurnal Kas September diabaikan.
+    kas = 2_124_500 + 50 + 1000 + 70 - 400 + 300 - 90 - 15 - 40 - 10
     assert p["kas"] == kas
+    assert gl.kas_at(ROWS, date(2026, 9, 29)) == 30_000_100  # sebelum saldo awal: buku besar
     k = gl.kas_detail(ROWS, date(2026, 10, 5), date(2026, 10, 18))
-    assert k["kas_awal"] == 30_000_150 and k["kas_akhir"] == kas
+    assert k["kas_awal"] == 2_124_550 and k["kas_akhir"] == kas
+    sep = gl.kas_detail(ROWS, date(2026, 9, 28), date(2026, 10, 4))
+    assert sep["kas_awal_date"] == date(2026, 9, 30) and sep["kas_awal"] == 2_124_500
+    assert sep["masuk_perduitan"] == 50 and sep["kas_akhir"] == 2_124_550
     assert k["masuk_perduitan"] == 1070 and k["keluar_perduitan"] == 90 and k["keluar_kasbon"] == 40
     assert k["masuk_penjualan_tunai"] == 300 and k["keluar_pembelian_tunai"] == 400 and k["keluar_transaksi"] == 25
     s = gl.stok_detail(ROWS, date(2026, 10, 5), date(2026, 10, 18), {"h1"})

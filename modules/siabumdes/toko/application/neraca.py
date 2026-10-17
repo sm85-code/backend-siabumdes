@@ -31,7 +31,7 @@ OPENING_DATE = date(2026, 9, 30)
 OPENING = {
     "kas": Decimal("2124500"),
     "piutang": ZERO,  # saldo awal piutang 8.392.000 diabaikan (permintaan pengguna)
-    "piutang_lainnya": Decimal("9700000"),  # termasuk kas bon tukang 500.000
+    "piutang_lainnya": ZERO,  # saldo awal 9.700.000 diabaikan (permintaan pengguna)
     "stok": Decimal("9783500"),
     "utang": ZERO,
 }

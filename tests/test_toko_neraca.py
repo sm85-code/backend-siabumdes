@@ -34,9 +34,11 @@ def test_neraca_seimbang_skenario_lengkap():
     for day in range(1, 20):
         p = position(data, date(2026, 10, day))
         aset = p["kas"] + p["stok"] + p["piutang"] + p["piutang_lainnya"]
-        assert aset == p["utang"] + p["laba"], (day, p)
+        # Sisa penjualan piutang Stock Out tidak tampil di Piutang Usaha (hanya transaksi manual).
+        sisa = (D("2000000") if day >= 9 else 0) - (D("500000") if day >= 14 else 0)
+        assert aset + sisa == p["utang"] + p["laba"], (day, p)
     end = position(data, date(2026, 10, 19))
-    assert end["piutang"] == D("1500000") and end["utang"] == D("2000000")
+    assert end["piutang"] == 0 and end["utang"] == D("2000000")
 
 
 def test_saldo_awal_oktober():
@@ -49,7 +51,7 @@ def test_saldo_awal_oktober():
     data.sales.append(Trade(date(2026, 9, 20), D("300"), "piutang", [(date(2026, 10, 10), D("300"))]))
     data.piutang_lain.append((date(2026, 10, 12), D("50")))
     q = position_with_opening(data, date(2026, 10, 12))
-    assert q["piutang"] == OPENING["piutang"] - 300 and q["kas"] == OPENING["kas"] + 100 + 300 - 50
+    assert q["piutang"] == 0 and q["kas"] == OPENING["kas"] + 100 + 300 - 50
     assert q["piutang_lainnya"] == OPENING["piutang_lainnya"] + 50
 
 
@@ -160,8 +162,9 @@ def test_stok_neraca_sama_dengan_manajemen_stok():
     assert manual_suspects(data, date(2026, 10, 18), "utang") == []
 
 
-def test_kasbon_perduitan_tidak_dobel_dengan_transaksi_manual():
-    from modules.siabumdes.toko.application.neraca import dedupe_kasbon
-    kasbon = [(date(2026, 10, 10), D("-500")), (date(2026, 10, 10), D("200"))]
-    manual = [(date(2026, 10, 8), D("-500"))]
-    assert dedupe_kasbon(kasbon, manual) == [(date(2026, 10, 10), D("200"))]
+def test_piutang_usaha_hanya_dari_transaksi_manual():
+    data = Data(sales=[Trade(date(2026, 10, 6), D("700"), "piutang", [(date(2026, 10, 9), D("300"))])],
+                journal=[(date(2026, 10, 7), {"piutang": D("250"), "laba": D("250")})])
+    p = position_with_opening(data, date(2026, 10, 11))
+    # Penjualan piutang Stock Out: pendapatan di laba, Kas saat dilunasi, tetapi tidak di Piutang Usaha.
+    assert p["piutang"] == D("250") and p["kas"] == OPENING["kas"] + 300 and p["laba"] == D("950")

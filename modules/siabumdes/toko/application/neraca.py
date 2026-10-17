@@ -83,20 +83,6 @@ def is_piutang_lain(name: str) -> bool:
     return any(k in n for k in PIUTANG_LAIN_KEYS)
 
 
-def dedupe_kasbon(kasbon: list[tuple[date, Decimal]], manual: list[tuple[date, Decimal]]) -> list[tuple[date, Decimal]]:
-    """Kasbon Perduitan yang sudah dicatat manual di menu Transaksi (nominal & arah sama,
-    selisih tanggal <= 7 hari) dilewati agar Piutang Lainnya dan Kas tidak dobel."""
-    left = list(manual)
-    out = []
-    for t, v in kasbon:
-        hit = next((m for m in left if m[1] == v and abs((m[0] - t).days) <= 7), None)
-        if hit:
-            left.remove(hit)
-        else:
-            out.append((t, v))
-    return out
-
-
 def _paid(t: Trade, d: date, credit: str) -> Decimal:
     if t.date > d:
         return ZERO
@@ -111,8 +97,9 @@ def position(data: Data, d: date) -> dict[str, Decimal]:
     revenue = sum((s.total for s in data.sales if s.date <= d), ZERO)
     cash_in = sum((_paid(s, d, "piutang") for s in data.sales), ZERO)
     cash_out = sum((_paid(p, d, "credit") for p in data.purchases), ZERO)
-    piutang = sum((s.total for s in data.sales if s.date <= d and s.method == "piutang"), ZERO) - sum(
-        (_paid(s, d, "piutang") for s in data.sales if s.method == "piutang"), ZERO)
+    # Piutang Usaha hanya dari transaksi manual menu Transaksi (lihat position_with_opening).
+    # Penjualan piutang Stock Out tetap masuk laba (pendapatan) dan Kas saat dilunasi.
+    piutang = ZERO
     utang = sum((p.total for p in data.purchases if p.date <= d and p.method == "credit"), ZERO) - sum(
         (_paid(p, d, "credit") for p in data.purchases if p.method == "credit"), ZERO)
     stock_in = sum((v for t, k, v in data.cards if t <= d and k == "in"), ZERO)
@@ -280,14 +267,14 @@ async def load(session) -> Data:
         data.moves.append((c.movement_date, c.product_id, c.quantity if c.direction == "in" else -c.quantity))
     for a in (await session.scalars(select(StockAdjustment))).all():
         data.moves.append((a.adjustment_date, a.product_id, a.quantity_delta))
-    kasbon: list[tuple[date, Decimal]] = []
     for e, jenis, name in (await session.execute(
         select(TokoEntry, TokoItem.jenis, TokoItem.name).join(TokoItem, TokoEntry.item_id == TokoItem.id)
     )).all():
         if is_piutang_lain(name):
-            kasbon.append((e.tanggal, Decimal(e.nominal) * (-1 if jenis == "pemasukan" else 1)))
-        else:
-            data.entries.append((e.tanggal, jenis, Decimal(e.nominal)))
+            # Kasbon Perduitan #1 diabaikan: Piutang Lainnya dan kas kasbon hanya dari transaksi
+            # manual menu Transaksi (Kas <-> Piutang Lainnya), jadi tidak masuk laba maupun Kas.
+            continue
+        data.entries.append((e.tanggal, jenis, Decimal(e.nominal)))
     # Transaksi manual dari menu Transaksi (unit UU05), dipetakan lewat akun COA.
     for row in await load_journal(session, clamp=False, manual_only=False):
         if row.balance_deltas():
@@ -298,7 +285,4 @@ async def load(session) -> Data:
             data.modal.append((row.date, row.modal_delta))
         if row.date >= JOURNAL_START and row.deltas():
             data.journal.append((row.date, row.deltas()))
-    manual_pl = [(r.date, r.deltas().get("piutang_lainnya", ZERO)) for r in data.manual_rows
-                 if r.date >= JOURNAL_START and r.deltas().get("piutang_lainnya")]
-    data.piutang_lain = dedupe_kasbon(kasbon, manual_pl)
     return data

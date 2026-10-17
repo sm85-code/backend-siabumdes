@@ -43,7 +43,7 @@ def test_saldo_awal_oktober():
     data = Data(entries=[(date(2026, 9, 5), "pemasukan", D("999")), (date(2026, 10, 2), "pemasukan", D("100"))])
     p = position_with_opening(data, date(2026, 10, 3))
     assert p["kas"] == OPENING["kas"] + 100 and p["laba"] == D("100")
-    assert OPENING["piutang"] == 0 and OPENING["piutang_lainnya"] == 0
+    assert OPENING["piutang"] == 0 and OPENING["piutang_lainnya"] == 0 and OPENING["kas"] == 0
     assert position_with_opening(data, OPENING_DATE)["piutang_lainnya"] == D("9200000")
     # Pelunasan 10 Okt atas penjualan piutang 20 Sep; kas bon 12 Okt.
     data.sales.append(Trade(date(2026, 9, 20), D("300"), "piutang", [(date(2026, 10, 10), D("300"))]))

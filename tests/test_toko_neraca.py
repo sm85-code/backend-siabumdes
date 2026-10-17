@@ -64,7 +64,8 @@ def test_transaksi_umum_dipetakan_ke_neraca():
     assert lunas.deltas() == {"kas": D("500"), "piutang_lainnya": D("-500")} and lunas.jenis == "mutasi"
     beban = _row("Beban Listrik", "beban", "Kas Toko", "aset")
     assert beban.jenis == "pengeluaran" and beban.deltas() == {"laba": D("-500"), "kas": D("-500")}
-    assert _row("Kas", "aset", "Modal Disetor", "ekuitas").deltas() == {}
+    assert _row("Kas", "aset", "Modal Disetor", "ekuitas").deltas() == {"kas": D("500"), "modal": D("500")}
+    assert _row("Kas", "aset", "Prive", "ekuitas").deltas() == {}
     data = Data(journal=[(lunas.date, lunas.deltas()), (beban.date, beban.deltas()),
                          (date(2026, 10, 11), _row("Utang Usaha", "kewajiban", "Kas", "aset").deltas())])
     p = position_with_opening(data, date(2026, 10, 12))
@@ -96,3 +97,18 @@ def test_rincian_kas_sama_dengan_neraca():
         assert k["kas_akhir"] == position_with_opening(data, d)["kas"], (d, k)
     k = kas_breakdown(data, date(2026, 10, 12))
     assert k["kas_awal"] == OPENING["kas"] and k["masuk_pelunasan_kasbon"] == 80 and k["keluar_transaksi"] == 5
+
+
+def test_modal_dan_laba_dari_transaksi():
+    from modules.siabumdes.toko.application.neraca import laba_split, modal_at
+    assert OPENING["stok"] == 0
+    modal = _row("Kas", "aset", "Penyertaan Modal BUMDES", "ekuitas")
+    assert modal.modal_delta == D("500") and modal.deltas() == {"kas": D("500"), "modal": D("500")}
+    assert _row("Kas", "aset", "Saldo Laba", "ekuitas").modal_delta == 0
+    data = Data(modal=[(date(2026, 8, 1), D("1000")), (modal.date, modal.modal_delta)],
+                entries=[(date(2026, 9, 10), "pemasukan", D("7")), (date(2026, 10, 6), "pemasukan", D("100")),
+                         (date(2026, 11, 3), "pemasukan", D("40"))])
+    assert modal_at(data, date(2026, 9, 30)) == D("1000") and modal_at(data, date(2026, 10, 31)) == D("1500")
+    assert laba_split(data, date(2026, 9, 27), date(2026, 9, 1)) == (0, 0)
+    assert laba_split(data, date(2026, 10, 31), date(2026, 10, 1)) == (0, D("100"))
+    assert laba_split(data, date(2026, 11, 8), date(2026, 11, 1)) == (D("100"), D("40"))

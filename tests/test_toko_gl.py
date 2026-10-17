@@ -51,12 +51,19 @@ def test_neraca_saldo_akun_dan_laba():
     kas = 2_124_500 + 50 + 1000 + 70 - 400 + 300 - 90 - 15 - 40 - 10
     assert p["kas"] == kas
     assert gl.kas_at(ROWS, date(2026, 9, 29)) == 30_000_100  # sebelum saldo awal: buku besar
-    k = gl.kas_detail(ROWS, date(2026, 10, 5), date(2026, 10, 18))
+    k = gl.kas_detail(ROWS, date(2026, 10, 5), date(2026, 10, 18), {"h1"})
     assert k["kas_awal"] == 2_124_550 and k["kas_akhir"] == kas
     sep = gl.kas_detail(ROWS, date(2026, 9, 28), date(2026, 10, 4))
     assert sep["kas_awal_date"] == date(2026, 9, 30) and sep["kas_awal"] == 2_124_500
     assert sep["masuk_perduitan"] == 50 and sep["kas_akhir"] == 2_124_550
     assert k["masuk_perduitan"] == 1070 and k["keluar_perduitan"] == 90 and k["keluar_kasbon"] == 40
-    assert k["masuk_penjualan_tunai"] == 300 and k["keluar_pembelian_tunai"] == 400 and k["keluar_transaksi"] == 25
+    assert k["masuk_penjualan_tunai"] == 300 and k["keluar_pembelian_modal_awal"] == 400 and k["keluar_transaksi"] == 25
     s = gl.stok_detail(ROWS, date(2026, 10, 5), date(2026, 10, 18), {"h1"})
     assert s == {"stok_awal": 0, "masuk_modal_awal": 400, "keluar_penjualan": -200, "keluar_internal": -20, "stok_akhir": 180}
+
+
+def test_kas_detail_debit_manual_per_keterangan():
+    rows = [JournalRow("x", date(2026, 10, 6), " Setoran modal ", Decimal(25), *KAS, *MODAL),
+            JournalRow("y", date(2026, 10, 7), "Setoran modal", Decimal(5), *KAS, *MODAL)]
+    k = gl.kas_detail(rows, date(2026, 10, 5), date(2026, 10, 18))
+    assert k["masuk_trx:Setoran modal"] == 30

@@ -95,7 +95,8 @@ def _other(r: JournalRow, pos: str) -> str | None:
     return r.credit_pos if r.debit_pos == pos else r.debit_pos
 
 
-def kas_detail(rows: list[JournalRow], start: date, d: date) -> dict[str, Decimal | date]:
+def kas_detail(rows: list[JournalRow], start: date, d: date,
+               modal_awal_heads: set[str] | frozenset[str] = frozenset()) -> dict[str, Decimal | date]:
     """Pergerakan Kas start..d dari jurnal; kas_awal + masuk − keluar = kas_akhir = Kas di Neraca."""
     awal = start - timedelta(days=1)
     if awal < KAS_OPENING_DATE <= d:
@@ -111,7 +112,11 @@ def kas_detail(rows: list[JournalRow], start: date, d: date) -> dict[str, Decima
         cat = "kasbon" if _other(r, "kas") == "piutang_lainnya" else "perduitan" if ref.startswith("TOKO:") else \
             "penjualan_tunai" if ref.startswith("stock-out-rev:") else "pelunasan_piutang" if ref.startswith("sale-pay:") else \
             "pembelian_tunai" if ref.startswith("stock-in:") else "pelunasan_utang" if ref.startswith("purchase-pay:") else "transaksi"
-        if cat == "kasbon":
+        if cat == "pembelian_tunai":
+            cat = "pembelian_modal_awal" if ref.split(":", 1)[1] in modal_awal_heads else "pembelian_reguler"
+        if cat == "transaksi" and v > 0:
+            key = f"masuk_trx:{(r.description or '').strip() or '(tanpa keterangan)'}"
+        elif cat == "kasbon":
             key = "masuk_pelunasan_kasbon" if v > 0 else "keluar_kasbon"
         else:
             key = f"{'masuk' if v > 0 else 'keluar'}_{cat}"

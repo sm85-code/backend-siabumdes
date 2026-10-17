@@ -65,6 +65,8 @@ class Data:
     journal: list[tuple[date, dict[str, Decimal]]] = field(default_factory=list)
     # Modal BUMDes dari menu Transaksi (akun ekuitas penyertaan modal, semua tanggal): (tanggal, +kredit/-debit).
     modal: list[tuple[date, Decimal]] = field(default_factory=list)
+    # Buku besar lengkap Unit 5 (semua transaksi menu Transaksi, termasuk otomatis), untuk pembanding.
+    ledger: list[tuple[date, dict[str, Decimal]]] = field(default_factory=list)
 
 
 # Item Perduitan yang namanya memuat kata ini dicatat sebagai Piutang Lainnya (bukan laba).
@@ -142,6 +144,14 @@ def _base_position(data: Data, d: date) -> dict[str, Decimal]:
     out["stok"] = p["stok"]
     out["laba"] = p["laba"] - base["laba"]
     return out
+
+
+LEDGER_KEYS = ("kas", "stok", "piutang", "piutang_lainnya", "utang", "modal")
+
+
+def ledger_at(data: Data, d: date) -> dict[str, Decimal]:
+    """Saldo akun menu Transaksi (Unit 5) s.d. d, dipetakan ke pos Neraca."""
+    return {k: sum((x.get(k, ZERO) for t, x in data.ledger if t <= d), ZERO) for k in LEDGER_KEYS}
 
 
 def modal_before_journal(data: Data) -> Decimal:
@@ -226,6 +236,9 @@ async def load(session) -> Data:
         else:
             data.entries.append((e.tanggal, jenis, Decimal(e.nominal)))
     # Transaksi manual dari menu Transaksi (unit UU05), dipetakan lewat akun COA.
+    for row in await load_journal(session, clamp=False, manual_only=False):
+        if row.balance_deltas():
+            data.ledger.append((row.date, row.balance_deltas()))
     for row in await load_journal(session, clamp=False):
         if row.modal_delta:
             data.modal.append((row.date, row.modal_delta))

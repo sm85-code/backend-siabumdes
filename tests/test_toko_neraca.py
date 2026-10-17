@@ -133,3 +133,12 @@ def test_modal_dan_belanja_modal_awal_september():
     # Stok = nilai kartu stok kumulatif; Kas Oktober dari saldo awal (efek kas September sudah di dalamnya).
     assert okt["stok"] == D("8000000") and okt["kas"] == OPENING["kas"]
     assert modal_at(data, date(2026, 10, 11)) == D("30000000")
+
+
+def test_buku_besar_pembanding():
+    from modules.siabumdes.toko.application.neraca import ledger_at
+    beli = _row("Persediaan Barang Dagang", "aset", "Kas Toko", "aset", "9000")
+    assert beli.balance_deltas() == {"stok": D("9000"), "kas": D("-9000")}
+    assert _row("Kas Toko", "aset", "Prive", "ekuitas").balance_deltas() == {"kas": D("500")}
+    data = Data(ledger=[(beli.date, beli.balance_deltas())])
+    assert ledger_at(data, date(2026, 10, 31))["stok"] == D("9000") and ledger_at(data, date(2026, 10, 1))["stok"] == 0

@@ -285,7 +285,7 @@ async def neraca(
     period (YYYY-MM) menentukan pemisahan Laba/Rugi Periode Lalu vs Berjalan;
     tanpa period dipakai bulan dari masing-masing tanggal."""
     from modules.siabumdes.toko.application.neraca import (
-        MODAL, OPENING_DATE, kas_breakdown, laba_split, load, modal_at, position_with_opening,
+        MODAL, OPENING_DATE, kas_breakdown, laba_split, ledger_at, load, modal_at, position_with_opening,
     )
 
     if period:
@@ -302,6 +302,7 @@ async def neraca(
             "laba_lalu": str(lalu),
             "laba_berjalan": str(berjalan),
             "kas_detail": {k: str(v) for k, v in kas_breakdown(data, d).items()},
+            "ledger": {k: str(v) for k, v in ledger_at(data, d).items()},
         })
     return {"modal": str(MODAL), "opening_date": OPENING_DATE.isoformat(), "positions": out}
 

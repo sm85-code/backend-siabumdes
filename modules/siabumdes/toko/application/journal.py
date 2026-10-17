@@ -95,6 +95,14 @@ class JournalRow:
             return Decimal(0)
         return self.amount if self.credit_pos == "modal" else -self.amount
 
+    def balance_deltas(self) -> dict[str, Decimal]:
+        """Saldo buku besar per pos Neraca (per sisi, tanpa syarat kedua akun dikenali)."""
+        out: dict[str, Decimal] = {}
+        for pos, side in ((self.debit_pos, 1), (self.credit_pos, -1)):
+            if pos and pos not in ("pendapatan", "beban"):
+                out[pos] = out.get(pos, Decimal(0)) + side * SIGN[pos] * self.amount
+        return out
+
     def deltas(self) -> dict[str, Decimal]:
         """Perubahan pos Neraca; 'laba' = pendapatan - beban. Kosong bila ada akun yang tak dikenali."""
         if not self.counted:
@@ -117,8 +125,11 @@ class JournalRow:
         }
 
 
-async def load_journal(session, start: date | None = None, end: date | None = None, clamp: bool = True) -> list[JournalRow]:
-    """clamp=False: semua tanggal (dipakai untuk Modal BUMDes)."""
+async def load_journal(
+    session, start: date | None = None, end: date | None = None, clamp: bool = True, manual_only: bool = True,
+) -> list[JournalRow]:
+    """clamp=False: semua tanggal (Modal BUMDes). manual_only=False: termasuk transaksi otomatis
+    (buku besar lengkap, untuk pembanding Neraca)."""
     accounts: dict[str, Account] = {}
     for a in (await session.scalars(select(Account))).all():
         if a.code not in accounts or a.group_code == UNIT_CODE:
@@ -136,7 +147,7 @@ async def load_journal(session, start: date | None = None, end: date | None = No
     for t, unit_code in (await session.execute(q)).all():
         if not belongs_to_unit5(unit_code, t.debit_account_code, t.credit_account_code, unit5):
             continue
-        if not is_manual(t.reference, t.transaction_type, t.is_closing):
+        if manual_only and not is_manual(t.reference, t.transaction_type, t.is_closing):
             continue
         d, c = accounts.get(t.debit_account_code), accounts.get(t.credit_account_code)
         rows.append(JournalRow(

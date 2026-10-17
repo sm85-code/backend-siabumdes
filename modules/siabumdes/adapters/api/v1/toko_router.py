@@ -276,22 +276,34 @@ async def delete_entry(
 @router.get("/neraca")
 async def neraca(
     dates: list[date] = Query(..., max_length=12),
+    period: Optional[str] = Query(None),
     _: User = Depends(require_toko_user),
     session: AsyncSession = Depends(get_db),
 ):
-    """Posisi neraca kumulatif per tanggal (lihat toko.application.neraca)."""
-    from modules.siabumdes.toko.application.neraca import MODAL, OPENING_DATE, kas_breakdown, load, position_with_opening
+    """Posisi neraca kumulatif per tanggal (lihat toko.application.neraca).
 
+    period (YYYY-MM) menentukan pemisahan Laba/Rugi Periode Lalu vs Berjalan;
+    tanpa period dipakai bulan dari masing-masing tanggal."""
+    from modules.siabumdes.toko.application.neraca import (
+        MODAL, OPENING_DATE, kas_breakdown, laba_split, load, modal_at, position_with_opening,
+    )
+
+    if period:
+        _check_period(period)
     data = await load(session)
-    return {
-        "modal": str(MODAL),
-        "opening_date": OPENING_DATE.isoformat(),
-        "positions": [{
+    out = []
+    for d in dates:
+        start = date(*map(int, period.split("-")), 1) if period else d.replace(day=1)
+        lalu, berjalan = laba_split(data, d, start)
+        out.append({
             "date": d.isoformat(),
             **{k: str(v) for k, v in position_with_opening(data, d).items()},
+            "modal": str(modal_at(data, d)),
+            "laba_lalu": str(lalu),
+            "laba_berjalan": str(berjalan),
             "kas_detail": {k: str(v) for k, v in kas_breakdown(data, d).items()},
-        } for d in dates],
-    }
+        })
+    return {"modal": str(MODAL), "opening_date": OPENING_DATE.isoformat(), "positions": out}
 
 
 @router.get("/journal")

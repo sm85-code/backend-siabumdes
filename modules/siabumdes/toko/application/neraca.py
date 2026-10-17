@@ -11,7 +11,7 @@ Definisi dibuat saling konsisten supaya Aset = Kewajiban + Ekuitas:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -21,6 +21,8 @@ from modules.siabumdes.inventory.infrastructure.models import Product, Purchase,
 from modules.siabumdes.toko.application.journal import load_journal
 from modules.siabumdes.toko.infrastructure.models import TokoEntry, TokoItem
 
+# Hanya dasar perhitungan Kas minggu s.d. 30 Sep (cara lama); Modal BUMDes di Neraca
+# kini dari menu Transaksi (modal_at).
 MODAL = Decimal("30000000")
 ZERO = Decimal("0")
 
@@ -32,7 +34,7 @@ OPENING = {
     "kas": Decimal("2124500"),
     "piutang": ZERO,  # saldo awal piutang 8.392.000 diabaikan (permintaan pengguna)
     "piutang_lainnya": ZERO,  # saldo awal 9.700.000 diabaikan (permintaan pengguna)
-    "stok": Decimal("9783500"),
+    "stok": ZERO,  # saldo awal 9.783.500 diabaikan (permintaan pengguna)
     "utang": ZERO,
 }
 PIUTANG_LAIN_LAMA = Decimal("9200000")
@@ -62,6 +64,8 @@ class Data:
     piutang_lain: list[tuple[date, Decimal]] = field(default_factory=list)
     # Transaksi manual menu Transaksi: (tanggal, {pos: perubahan}) pos = kas|piutang|piutang_lainnya|utang|stok|laba.
     journal: list[tuple[date, dict[str, Decimal]]] = field(default_factory=list)
+    # Modal BUMDes dari menu Transaksi (akun ekuitas penyertaan modal, semua tanggal): (tanggal, +kredit/-debit).
+    modal: list[tuple[date, Decimal]] = field(default_factory=list)
 
 
 # Item Perduitan yang namanya memuat kata ini dicatat sebagai Piutang Lainnya (bukan laba).
@@ -137,6 +141,22 @@ def _base_position(data: Data, d: date) -> dict[str, Decimal]:
     return out
 
 
+def modal_at(data: Data, d: date) -> Decimal:
+    """Modal BUMDes yang tampil di Neraca: kumulatif transaksi akun penyertaan modal s.d. d."""
+    return sum((v for t, v in data.modal if t <= d), ZERO)
+
+
+def laba_at(data: Data, d: date) -> Decimal:
+    """Laba kumulatif sejak 1 Okt 2026; laba sampai 30 Sep dianggap 0."""
+    return ZERO if d <= OPENING_DATE else position_with_opening(data, d)["laba"]
+
+
+def laba_split(data: Data, d: date, period_start: date) -> tuple[Decimal, Decimal]:
+    """(Laba/Rugi Periode Lalu, Laba/Rugi Periode Berjalan) untuk periode yang mulai period_start."""
+    lalu = laba_at(data, period_start - timedelta(days=1))
+    return lalu, laba_at(data, d) - lalu
+
+
 def _between(t: date, start: date | None, d: date) -> bool:
     return (start is None or t > start) and t <= d
 
@@ -198,7 +218,9 @@ async def load(session) -> Data:
         else:
             data.entries.append((e.tanggal, jenis, Decimal(e.nominal)))
     # Transaksi manual dari menu Transaksi (unit UU05), dipetakan lewat akun COA.
-    for row in await load_journal(session, start=JOURNAL_START):
-        if row.deltas():
+    for row in await load_journal(session, clamp=False):
+        if row.modal_delta:
+            data.modal.append((row.date, row.modal_delta))
+        if row.date >= JOURNAL_START and row.deltas():
             data.journal.append((row.date, row.deltas()))
     return data

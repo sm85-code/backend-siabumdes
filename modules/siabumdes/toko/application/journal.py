@@ -32,6 +32,10 @@ def classify(name: str, category: str, subcategory: str = "") -> str | None:
         return "pendapatan"
     if c in ("beban", "hpp"):
         return "beban"
+    if c == "ekuitas":
+        # Hanya penyertaan modal; saldo laba, bagi hasil, ikhtisar laba rugi bukan Modal.
+        named = ("penyertaan modal" in n or n.startswith("modal")) and "bagi hasil" not in n
+        return "modal" if s in MODAL_SUBCATEGORIES or (not s and named) else None
     if any(k in n for k in ("piutang lain", "kas bon", "kasbon", "pinjam")):
         return "piutang_lainnya"
     if s == "kas_bank" or n.startswith(("kas", "bank")):
@@ -45,8 +49,10 @@ def classify(name: str, category: str, subcategory: str = "") -> str | None:
     return None
 
 
+MODAL_SUBCATEGORIES = ("modal_desa", "modal_masyarakat")
+
 # Pengaruh sisi debit (+1) / kredit (-1) terhadap nilai pos di Neraca toko / laba.
-SIGN = {"kas": 1, "piutang_lainnya": 1, "piutang": 1, "stok": 1, "utang": -1, "pendapatan": -1, "beban": 1}
+SIGN = {"kas": 1, "piutang_lainnya": 1, "piutang": 1, "stok": 1, "utang": -1, "pendapatan": -1, "beban": 1, "modal": -1}
 
 
 @dataclass
@@ -75,6 +81,13 @@ class JournalRow:
             return "pengeluaran" if self.debit_pos == "beban" else "pemasukan"
         return "mutasi"
 
+    @property
+    def modal_delta(self) -> Decimal:
+        """Perubahan Modal BUMDes: kredit akun modal menambah, debit mengurangi."""
+        if (self.debit_pos == "modal") == (self.credit_pos == "modal"):
+            return Decimal(0)
+        return self.amount if self.credit_pos == "modal" else -self.amount
+
     def deltas(self) -> dict[str, Decimal]:
         """Perubahan pos Neraca; 'laba' = pendapatan - beban. Kosong bila ada akun yang tak dikenali."""
         if not self.counted:
@@ -97,14 +110,16 @@ class JournalRow:
         }
 
 
-async def load_journal(session, start: date | None = None, end: date | None = None) -> list[JournalRow]:
+async def load_journal(session, start: date | None = None, end: date | None = None, clamp: bool = True) -> list[JournalRow]:
+    """clamp=False: semua tanggal (dipakai untuk Modal BUMDes)."""
     accounts: dict[str, Account] = {}
     for a in (await session.scalars(select(Account))).all():
         if a.code not in accounts or a.group_code == UNIT_CODE:
             accounts[a.code] = a
     q = (select(Transaction).join(UnitUsaha, Transaction.unit_usaha_id == UnitUsaha.id)
          .where(UnitUsaha.code == UNIT_CODE).order_by(Transaction.date, Transaction.created_at))
-    start = max(start or JOURNAL_START, JOURNAL_START)
+    if clamp:
+        start = max(start or JOURNAL_START, JOURNAL_START)
     if start:
         q = q.where(Transaction.date >= start)
     if end:

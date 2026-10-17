@@ -3,7 +3,7 @@ from datetime import date
 from decimal import Decimal as D
 
 from modules.siabumdes.toko.application.journal import JournalRow, classify, is_manual
-from modules.siabumdes.toko.application.neraca import MODAL, OPENING, OPENING_DATE, Data, Trade, is_piutang_lain, position, position_with_opening
+from modules.siabumdes.toko.application.neraca import OPENING, OPENING_DATE, Data, Trade, is_piutang_lain, position, position_with_opening
 
 
 def test_neraca_seimbang_skenario_lengkap():
@@ -34,7 +34,7 @@ def test_neraca_seimbang_skenario_lengkap():
     for day in range(1, 20):
         p = position(data, date(2026, 10, day))
         aset = p["kas"] + p["stok"] + p["piutang"] + p["piutang_lainnya"]
-        assert aset == p["utang"] + MODAL + p["laba"], (day, p)
+        assert aset == p["utang"] + p["laba"], (day, p)
     end = position(data, date(2026, 10, 19))
     assert end["piutang"] == D("1500000") and end["utang"] == D("2000000")
 
@@ -101,7 +101,7 @@ def test_rincian_kas_sama_dengan_neraca():
 
 def test_modal_dan_laba_dari_transaksi():
     from modules.siabumdes.toko.application.neraca import laba_split, modal_at
-    assert OPENING["stok"] == 0
+    assert "stok" not in OPENING
     modal = _row("Kas", "aset", "Penyertaan Modal BUMDES", "ekuitas")
     assert modal.modal_delta == D("500") and modal.deltas() == {"kas": D("500"), "modal": D("500")}
     assert _row("Kas", "aset", "Saldo Laba", "ekuitas").modal_delta == 0
@@ -112,3 +112,24 @@ def test_modal_dan_laba_dari_transaksi():
     assert laba_split(data, date(2026, 9, 27), date(2026, 9, 1)) == (0, 0)
     assert laba_split(data, date(2026, 10, 31), date(2026, 10, 1)) == (0, D("100"))
     assert laba_split(data, date(2026, 11, 8), date(2026, 11, 1)) == (D("100"), D("40"))
+
+
+def test_modal_dan_belanja_modal_awal_september():
+    from modules.siabumdes.toko.application.journal import belongs_to_unit5
+    from modules.siabumdes.toko.application.neraca import kas_breakdown, modal_at
+    assert belongs_to_unit5("UU05", "x", "y", set()) and not belongs_to_unit5("UU01", "1.1.01.15", "y", {"1.1.01.15"})
+    assert belongs_to_unit5(None, "1.1.01.15", "3.1.01.01", {"1.1.01.15"}) and not belongs_to_unit5(None, "a", "b", {"c"})
+    # Modal 30 jt (Debit Kas / Kredit Modal) 1 Sep; Belanja Modal Awal 9 jt (kartu stok + pembelian modal_awal) 2 Sep.
+    data = Data(
+        modal=[(date(2026, 9, 1), D("30000000"))],
+        journal=[(date(2026, 9, 1), {"kas": D("30000000"), "modal": D("30000000")})],
+        purchases=[Trade(date(2026, 9, 2), D("9000000"), "modal_awal")],
+        cards=[(date(2026, 9, 2), "in", D("9000000")), (date(2026, 10, 6), "out", D("1000000"))],
+    )
+    sep = position_with_opening(data, date(2026, 9, 27))
+    assert sep["kas"] == D("30000000") - D("9000000") - D("9200000") and sep["stok"] == D("9000000")
+    assert kas_breakdown(data, date(2026, 9, 27))["kas_akhir"] == sep["kas"]
+    okt = position_with_opening(data, date(2026, 10, 11))
+    # Stok = nilai kartu stok kumulatif; Kas Oktober dari saldo awal (efek kas September sudah di dalamnya).
+    assert okt["stok"] == D("8000000") and okt["kas"] == OPENING["kas"]
+    assert modal_at(data, date(2026, 10, 11)) == D("30000000")

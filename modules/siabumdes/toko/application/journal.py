@@ -25,6 +25,13 @@ def is_manual(reference: str | None, transaction_type: str | None, is_closing: b
     return not is_closing and not ref.startswith(AUTO_REF_PREFIXES) and not typ.startswith(AUTO_TYPES)
 
 
+def belongs_to_unit5(unit_code: str | None, debit: str, credit: str, unit5_codes: set[str]) -> bool:
+    """Transaksi Unit 5: unitnya UU05, atau tanpa unit (BUMDes pusat) tetapi memakai akun COA UU05."""
+    if unit_code:
+        return unit_code == UNIT_CODE
+    return debit in unit5_codes or credit in unit5_codes
+
+
 def classify(name: str, category: str, subcategory: str = "") -> str | None:
     """Pos toko untuk satu akun: kas|piutang_lainnya|piutang|utang|stok|pendapatan|beban, atau None."""
     n, c, s = " ".join((name or "").lower().split()), (category or "").lower(), (subcategory or "").lower()
@@ -116,8 +123,9 @@ async def load_journal(session, start: date | None = None, end: date | None = No
     for a in (await session.scalars(select(Account))).all():
         if a.code not in accounts or a.group_code == UNIT_CODE:
             accounts[a.code] = a
-    q = (select(Transaction).join(UnitUsaha, Transaction.unit_usaha_id == UnitUsaha.id)
-         .where(UnitUsaha.code == UNIT_CODE).order_by(Transaction.date, Transaction.created_at))
+    unit5 = {c for c, a in accounts.items() if a.group_code == UNIT_CODE}
+    q = (select(Transaction, UnitUsaha.code).outerjoin(UnitUsaha, Transaction.unit_usaha_id == UnitUsaha.id)
+         .order_by(Transaction.date, Transaction.created_at))
     if clamp:
         start = max(start or JOURNAL_START, JOURNAL_START)
     if start:
@@ -125,7 +133,9 @@ async def load_journal(session, start: date | None = None, end: date | None = No
     if end:
         q = q.where(Transaction.date <= end)
     rows = []
-    for t in (await session.scalars(q)).all():
+    for t, unit_code in (await session.execute(q)).all():
+        if not belongs_to_unit5(unit_code, t.debit_account_code, t.credit_account_code, unit5):
+            continue
         if not is_manual(t.reference, t.transaction_type, t.is_closing):
             continue
         d, c = accounts.get(t.debit_account_code), accounts.get(t.credit_account_code)

@@ -21,8 +21,8 @@ from modules.siabumdes.inventory.infrastructure.models import Product, Purchase,
 from modules.siabumdes.toko.application.journal import load_journal
 from modules.siabumdes.toko.infrastructure.models import TokoEntry, TokoItem
 
-# Hanya dasar perhitungan Kas minggu s.d. 30 Sep (cara lama); Modal BUMDes di Neraca
-# kini dari menu Transaksi (modal_at).
+# Tidak lagi dipakai dalam perhitungan (Modal dari menu Transaksi, lihat modal_at); hanya
+# dikirim di respons lama sebagai fallback.
 MODAL = Decimal("30000000")
 ZERO = Decimal("0")
 
@@ -34,7 +34,6 @@ OPENING = {
     "kas": Decimal("2124500"),
     "piutang": ZERO,  # saldo awal piutang 8.392.000 diabaikan (permintaan pengguna)
     "piutang_lainnya": ZERO,  # saldo awal 9.700.000 diabaikan (permintaan pengguna)
-    "stok": ZERO,  # saldo awal 9.783.500 diabaikan (permintaan pengguna)
     "utang": ZERO,
 }
 PIUTANG_LAIN_LAMA = Decimal("9200000")
@@ -100,7 +99,7 @@ def position(data: Data, d: date) -> dict[str, Decimal]:
     adj = sum((v for t, v in data.adjustments if t <= d), ZERO)
     lain = sum((v for t, v in data.piutang_lain if t <= d), ZERO)
     return {
-        "kas": MODAL + toko_in - toko_out + cash_in - cash_out - lain,
+        "kas": toko_in - toko_out + cash_in - cash_out - lain,
         "piutang_lainnya": lain,
         "stok": stock_in - stock_out + adj,
         "piutang": piutang,
@@ -131,14 +130,23 @@ def position_with_opening(data: Data, d: date) -> dict[str, Decimal]:
 def _base_position(data: Data, d: date) -> dict[str, Decimal]:
     p = position(data, d)
     if d <= OPENING_DATE:
-        # Sebelum saldo awal: Piutang Lainnya lama 9,2 jt dipinjamkan dari kas.
-        p["kas"] -= PIUTANG_LAIN_LAMA
+        # Sebelum saldo awal: kas dimulai dari Modal sebelum 1 Sep (modal sejak 1 Sep masuk lewat
+        # sisi Kas jurnalnya); Piutang Lainnya lama 9,2 jt dipinjamkan dari kas.
+        p["kas"] += modal_before_journal(data) - PIUTANG_LAIN_LAMA
         p["piutang_lainnya"] += PIUTANG_LAIN_LAMA
         return p
     base = position(data, OPENING_DATE)
-    out = {k: OPENING[k] + p[k] - base[k] for k in ("kas", "stok", "piutang", "utang", "piutang_lainnya")}
+    out = {k: OPENING[k] + p[k] - base[k] for k in ("kas", "piutang", "utang", "piutang_lainnya")}
+    # Stok tanpa saldo awal: nilai kartu stok kumulatif (semua tanggal, termasuk Belanja Modal
+    # Awal September) + penyesuaian, sama dengan Manajemen Stok.
+    out["stok"] = p["stok"]
     out["laba"] = p["laba"] - base["laba"]
     return out
+
+
+def modal_before_journal(data: Data) -> Decimal:
+    """Modal yang tercatat sebelum JOURNAL_START (sisi Kas-nya tidak dibaca dari jurnal)."""
+    return sum((v for t, v in data.modal if t < JOURNAL_START), ZERO)
 
 
 def modal_at(data: Data, d: date) -> Decimal:
@@ -173,7 +181,7 @@ def kas_breakdown(data: Data, d: date) -> dict[str, Decimal]:
     pay = lambda trades, method: sum((a for x in trades if x.method == method for t, a in x.payments if rng(t)), ZERO)  # noqa: E731
     jk = [x.get("kas", ZERO) for t, x in data.journal if jstart <= t <= d]
     out = {
-        "kas_awal": OPENING["kas"] if after else MODAL - PIUTANG_LAIN_LAMA,
+        "kas_awal": OPENING["kas"] if after else modal_before_journal(data) - PIUTANG_LAIN_LAMA,
         "masuk_perduitan": sum((n for t, j, n in data.entries if rng(t) and j == "pemasukan"), ZERO),
         "masuk_penjualan_tunai": sum((x.total for x in data.sales if rng(x.date) and x.method != "piutang"), ZERO),
         "masuk_pelunasan_piutang": pay(data.sales, "piutang"),

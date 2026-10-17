@@ -43,7 +43,7 @@ def test_saldo_awal_oktober():
     data = Data(entries=[(date(2026, 9, 5), "pemasukan", D("999")), (date(2026, 10, 2), "pemasukan", D("100"))])
     p = position_with_opening(data, date(2026, 10, 3))
     assert p["kas"] == OPENING["kas"] + 100 and p["laba"] == D("100")
-    assert OPENING["piutang"] == 0 and OPENING["piutang_lainnya"] == 0 and OPENING["kas"] == 0
+    assert OPENING["piutang"] == 0 and OPENING["piutang_lainnya"] == 0 and OPENING["kas"] == D("2124500")
     assert position_with_opening(data, OPENING_DATE)["piutang_lainnya"] == D("9200000")
     # Pelunasan 10 Okt atas penjualan piutang 20 Sep; kas bon 12 Okt.
     data.sales.append(Trade(date(2026, 9, 20), D("300"), "piutang", [(date(2026, 10, 10), D("300"))]))
@@ -76,4 +76,23 @@ def test_jurnal_mulai_september():
     lunas = {"kas": D("100"), "piutang_lainnya": D("-100")}
     data = Data(journal=[(date(2026, 8, 31), {"kas": D("999")}), (date(2026, 9, 10), lunas)])
     assert position_with_opening(data, date(2026, 9, 12))["kas"] == position_with_opening(Data(), date(2026, 9, 12))["kas"] + 100
-    assert position_with_opening(data, date(2026, 10, 3))["kas"] == OPENING["kas"] + 100
+    # Kas: transaksi menu Transaksi September diabaikan untuk minggu Oktober; akun lain tetap.
+    q = position_with_opening(data, date(2026, 10, 3))
+    assert q["kas"] == OPENING["kas"] and q["piutang_lainnya"] == OPENING["piutang_lainnya"] - 100
+
+
+def test_rincian_kas_sama_dengan_neraca():
+    from modules.siabumdes.toko.application.neraca import kas_breakdown
+    data = Data(
+        sales=[Trade(date(2026, 10, 6), D("700"), "cash"), Trade(date(2026, 9, 20), D("300"), "piutang", [(date(2026, 10, 7), D("300"))])],
+        purchases=[Trade(date(2026, 10, 6), D("2000"), "cash"), Trade(date(2026, 9, 21), D("400"), "credit", [(date(2026, 10, 8), D("150"))])],
+        entries=[(date(2026, 10, 6), "pemasukan", D("50")), (date(2026, 10, 7), "pengeluaran", D("20"))],
+        piutang_lain=[(date(2026, 10, 8), D("-80")), (date(2026, 10, 9), D("10"))],
+        journal=[(date(2026, 9, 15), {"kas": D("-999")}), (date(2026, 10, 9), {"kas": D("60"), "laba": D("60")}),
+                 (date(2026, 10, 10), {"kas": D("-5"), "laba": D("-5")})],
+    )
+    for d in (date(2026, 9, 25), date(2026, 10, 12)):
+        k = kas_breakdown(data, d)
+        assert k["kas_akhir"] == position_with_opening(data, d)["kas"], (d, k)
+    k = kas_breakdown(data, date(2026, 10, 12))
+    assert k["kas_awal"] == OPENING["kas"] and k["masuk_pelunasan_kasbon"] == 80 and k["keluar_transaksi"] == 5

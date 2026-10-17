@@ -29,7 +29,7 @@ ZERO = Decimal("0")
 # laba = akumulasi sejak 1 Oktober 2026. Tanggal s.d. OPENING_DATE tetap seperti dulu.
 OPENING_DATE = date(2026, 9, 30)
 OPENING = {
-    "kas": ZERO,  # saldo awal 2.124.500 diabaikan (permintaan pengguna)
+    "kas": Decimal("2124500"),
     "piutang": ZERO,  # saldo awal piutang 8.392.000 diabaikan (permintaan pengguna)
     "piutang_lainnya": ZERO,  # saldo awal 9.700.000 diabaikan (permintaan pengguna)
     "stok": Decimal("9783500"),
@@ -38,6 +38,9 @@ OPENING = {
 PIUTANG_LAIN_LAMA = Decimal("9200000")
 # Perduitan membaca transaksi menu Transaksi mulai tanggal ini; sebelumnya diabaikan.
 JOURNAL_START = date(2026, 9, 1)
+# Khusus Kas: untuk tanggal setelah OPENING_DATE, transaksi menu Transaksi September diabaikan
+# (kas September sudah tercermin di saldo awal Kas 30 Sep).
+KAS_JOURNAL_START_AFTER_OPENING = date(2026, 10, 1)
 
 
 @dataclass
@@ -112,6 +115,8 @@ def position_with_opening(data: Data, d: date) -> dict[str, Decimal]:
     termasuk dalam saldo awal 30 Sep: posisi = saldo awal/legacy + jurnal s.d. tanggal.
     Laba dari jurnal setelah saldo awal hanya dihitung sejak 1 Okt (laba September sudah lewat)."""
     j = journal_sum(data, d)
+    if d > OPENING_DATE:
+        j["kas"] = journal_sum(data, d, KAS_JOURNAL_START_AFTER_OPENING)["kas"]
     out = _base_position(data, d)
     for k in ("kas", "piutang", "piutang_lainnya", "utang", "stok"):
         out[k] += j[k]
@@ -129,6 +134,40 @@ def _base_position(data: Data, d: date) -> dict[str, Decimal]:
     base = position(data, OPENING_DATE)
     out = {k: OPENING[k] + p[k] - base[k] for k in ("kas", "stok", "piutang", "utang", "piutang_lainnya")}
     out["laba"] = p["laba"] - base["laba"]
+    return out
+
+
+def _between(t: date, start: date | None, d: date) -> bool:
+    return (start is None or t > start) and t <= d
+
+
+def kas_breakdown(data: Data, d: date) -> dict[str, Decimal]:
+    """Rincian pergerakan Kas s.d. tanggal d; kas_akhir sama dengan Kas di Neraca.
+
+    Setelah OPENING_DATE: dari saldo awal Kas 30 Sep. Sampai OPENING_DATE: dari
+    Modal BUMDes dikurangi Piutang Lainnya lama (perhitungan lama)."""
+    after = d > OPENING_DATE
+    start = OPENING_DATE if after else None
+    jstart = KAS_JOURNAL_START_AFTER_OPENING if after else JOURNAL_START
+    rng = lambda t: _between(t, start, d)  # noqa: E731
+    pay = lambda trades, method: sum((a for x in trades if x.method == method for t, a in x.payments if rng(t)), ZERO)  # noqa: E731
+    jk = [x.get("kas", ZERO) for t, x in data.journal if jstart <= t <= d]
+    out = {
+        "kas_awal": OPENING["kas"] if after else MODAL - PIUTANG_LAIN_LAMA,
+        "masuk_perduitan": sum((n for t, j, n in data.entries if rng(t) and j == "pemasukan"), ZERO),
+        "masuk_penjualan_tunai": sum((x.total for x in data.sales if rng(x.date) and x.method != "piutang"), ZERO),
+        "masuk_pelunasan_piutang": pay(data.sales, "piutang"),
+        "masuk_pelunasan_kasbon": -sum((v for t, v in data.piutang_lain if rng(t) and v < 0), ZERO),
+        "masuk_transaksi": sum((v for v in jk if v > 0), ZERO),
+        "keluar_perduitan": sum((n for t, j, n in data.entries if rng(t) and j != "pemasukan"), ZERO),
+        "keluar_pembelian_tunai": sum((x.total for x in data.purchases if rng(x.date) and x.method != "credit"), ZERO),
+        "keluar_pelunasan_utang": pay(data.purchases, "credit"),
+        "keluar_kasbon": sum((v for t, v in data.piutang_lain if rng(t) and v > 0), ZERO),
+        "keluar_transaksi": -sum((v for v in jk if v < 0), ZERO),
+    }
+    masuk = sum((v for k, v in out.items() if k.startswith("masuk_")), ZERO)
+    keluar = sum((v for k, v in out.items() if k.startswith("keluar_")), ZERO)
+    out["kas_akhir"] = out["kas_awal"] + masuk - keluar
     return out
 
 

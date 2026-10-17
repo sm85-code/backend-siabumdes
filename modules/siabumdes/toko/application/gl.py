@@ -17,7 +17,8 @@ LR_ROWS = ("saldo", "jual", "lain", "trx_in", "umum", "hpp", "internal", "trx_ou
 LR_IN = ("saldo", "jual", "lain", "trx_in")
 BAL_KEYS = ("kas", "stok", "piutang", "piutang_lainnya", "utang", "modal")
 WEEK_KEYS = ("w1", "w2", "w3", "w4", "w5")
-# Saldo awal Kas yang pernah ditetapkan pengguna (30 Sep 2026); kini hanya pembanding di catatan.
+# Saldo awal Kas yang ditetapkan pengguna (30 Sep 2026). Kas di Neraca sesudah tanggal ini =
+# 2.124.500 + pergerakan akun Kas/Bank Unit 5 mulai 1 Okt 2026 (jurnal Kas September diabaikan).
 KAS_OPENING_DATE = date(2026, 9, 30)
 KAS_OPENING = Decimal("2124500")
 
@@ -78,6 +79,14 @@ def balances_at(rows: list[JournalRow], d: date) -> dict[str, Decimal]:
     return out
 
 
+def kas_at(rows: list[JournalRow], d: date) -> Decimal:
+    """Kas/Bank di Neraca: s.d. 30 Sep 2026 saldo buku besar; sesudahnya 2.124.500 + pergerakan Kas sejak 1 Okt."""
+    if d < KAS_OPENING_DATE:
+        return balances_at(rows, d)["kas"]
+    return KAS_OPENING + sum((r.balance_deltas().get("kas", ZERO) for r in rows
+                              if KAS_OPENING_DATE < r.date <= d and not is_closing(r)), ZERO)
+
+
 def laba_at(rows: list[JournalRow], d: date, after: date | None = None) -> Decimal:
     return sum((laba_delta(r) for r in rows if r.date <= d and (after is None or r.date > after)), ZERO)
 
@@ -86,10 +95,12 @@ def _other(r: JournalRow, pos: str) -> str | None:
     return r.credit_pos if r.debit_pos == pos else r.debit_pos
 
 
-def kas_detail(rows: list[JournalRow], start: date, d: date) -> dict[str, Decimal]:
+def kas_detail(rows: list[JournalRow], start: date, d: date) -> dict[str, Decimal | date]:
     """Pergerakan Kas start..d dari jurnal; kas_awal + masuk − keluar = kas_akhir = Kas di Neraca."""
     awal = start - timedelta(days=1)
-    out = {"kas_awal": balances_at(rows, awal)["kas"]}
+    if awal < KAS_OPENING_DATE <= d:
+        awal = KAS_OPENING_DATE  # periode melewati saldo awal: mulai dari 2.124.500 per 30 Sep
+    out = {"kas_awal": kas_at(rows, awal), "kas_awal_date": awal}
     for r in rows:
         if not (awal < r.date <= d) or is_closing(r):
             continue
@@ -105,7 +116,7 @@ def kas_detail(rows: list[JournalRow], start: date, d: date) -> dict[str, Decima
         else:
             key = f"{'masuk' if v > 0 else 'keluar'}_{cat}"
         out[key] = out.get(key, ZERO) + abs(v)
-    out["kas_akhir"] = balances_at(rows, d)["kas"]
+    out["kas_akhir"] = kas_at(rows, d)
     return out
 
 
@@ -133,5 +144,5 @@ def position(rows: list[JournalRow], d: date, period: str) -> dict[str, Decimal]
     """Neraca per tanggal d: saldo akun Unit 5; Laba/Rugi Periode Lalu = s.d. sehari sebelum
     Senin Minggu ke-1 periode, Periode Berjalan = sejak Senin Minggu ke-1 s.d. d."""
     start = first_monday(period) - timedelta(days=1)
-    return {**balances_at(rows, d), "laba_lalu": laba_at(rows, min(start, d)),
+    return {**balances_at(rows, d), "kas": kas_at(rows, d), "laba_lalu": laba_at(rows, min(start, d)),
             "laba_berjalan": laba_at(rows, d, after=start) if d > start else ZERO}

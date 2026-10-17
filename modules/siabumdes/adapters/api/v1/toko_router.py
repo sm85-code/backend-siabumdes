@@ -343,7 +343,7 @@ async def perduitan3_gl(
         positions.append({
             "date": d.isoformat(),
             **{k: str(v) for k, v in gl.position(rows, d, period).items()},
-            "kas_detail": {k: str(v) for k, v in gl.kas_detail(rows, start, d).items()},
+            "kas_detail": {k: str(v) for k, v in gl.kas_detail(rows, start, d, modal_awal).items()},
             "stok_detail": {k: str(v) for k, v in gl.stok_detail(rows, start, d, modal_awal).items()},
             "pembanding": {"stok": str(stok_manajemen(data, d)), "utang": str(position(data, d)["utang"])},
             "manual_suspects": {k: manual_suspects(data, d, k) for k in ("stok", "utang")},

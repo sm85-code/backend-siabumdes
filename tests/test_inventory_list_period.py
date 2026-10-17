@@ -30,3 +30,11 @@ def test_without_period_is_backward_compatible():
     svc.session = s
     asyncio.run(svc.list_movements())
     assert "movement_date >=" not in s.stmts[0]
+
+
+def test_movements_filter_by_unit():
+    s = Session()
+    svc = InventoryService.__new__(InventoryService)
+    svc.session = s
+    asyncio.run(svc.list_movements(unit_usaha_id="u5"))
+    assert "products.unit_usaha_id = 'u5'" in s.stmts[0]

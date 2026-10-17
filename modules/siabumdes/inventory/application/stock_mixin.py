@@ -493,6 +493,7 @@ class InventoryStockMixin:
         limit: int = 100,
         date_from: Optional[date] = None,
         date_to: Optional[date] = None,
+        unit_usaha_id: Optional[str] = None,
     ) -> list[dict[str, Any]]:
         stmt = (
             select(StockCard)
@@ -506,6 +507,8 @@ class InventoryStockMixin:
             stmt = stmt.where(StockCard.movement_date <= date_to)
         if product_id:
             stmt = stmt.where(StockCard.product_id == product_id)
+        if unit_usaha_id:
+            stmt = stmt.where(StockCard.product_id.in_(select(Product.id).where(Product.unit_usaha_id == unit_usaha_id)))
         if direction in {"in", "out"}:
             stmt = stmt.where(StockCard.direction == direction)
         # Cancelled rows are purged on cancel; hide any legacy soft-cancels.

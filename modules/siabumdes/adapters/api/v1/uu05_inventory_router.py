@@ -629,12 +629,15 @@ async def list_movements(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     limit: int = Query(100, ge=1, le=2000),
-    _: User = Depends(require_inventory_user),
+    unit_usaha_id: Optional[str] = None,
+    user: User = Depends(require_inventory_user),
     session: AsyncSession = Depends(get_db),
 ):
+    # Pengelola selalu dibatasi ke unitnya sendiri; peran lain boleh memfilter per unit.
+    uid = user.unit_usaha_id if public_role(user.role) == "pengelola" else unit_usaha_id
     return await InventoryService(session).list_movements(
         product_id=product_id, direction=direction, limit=limit,
-        date_from=date_from, date_to=date_to,
+        date_from=date_from, date_to=date_to, unit_usaha_id=uid,
     )
 
 

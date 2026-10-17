@@ -75,6 +75,8 @@ class JournalRow:
     credit_name: str
     credit_pos: str | None
     reference: str = ""
+    transaction_type: str = ""
+    is_closing: bool = False
 
     @property
     def counted(self) -> bool:
@@ -155,6 +157,6 @@ async def load_journal(
             t.id, t.date, t.description or "", Decimal(t.amount),
             t.debit_account_code, d.name if d else "", classify(d.name, d.category, d.subcategory) if d else None,
             t.credit_account_code, c.name if c else "", classify(c.name, c.category, c.subcategory) if c else None,
-            t.reference or "",
+            t.reference or "", t.transaction_type or "", bool(t.is_closing),
         ))
     return rows

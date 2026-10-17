@@ -124,3 +124,33 @@ async def test_reweek_only_moves_never_merges_or_deletes(toko_context):
         assert (await session.get(Transaction, txs[e.id])).amount == e.nominal
     assert (await session.get(Transaction, a.transaction_id)).description == 'Pendapatan Saldo - Minggu 4 - 09/2026'
     assert await reweek_toko_entries(session) == (0, 2)
+
+
+@pytest.mark.asyncio
+async def test_kasbon_entries_post_to_piutang_lainnya(toko_context):
+    from modules.siabumdes.application.toko_transactions import repost_kasbon_entries
+
+    session, admin, _, _, unit, *_ = toko_context
+    await _setup(session, unit)
+    item = TokoItem(name='Kasbon Karyawan', jenis='pengeluaran')
+    session.add(item)
+    await session.flush()
+    entry = TokoEntry(item_id=item.id, period='2026-10', week=2, tanggal=date(2026, 10, 14), nominal=Decimal('40000'))
+    session.add(entry)
+    await session.flush()
+    # Tanpa akun Piutang Lainnya: tetap jurnal lama (Beban), tidak ada yang ditulis ulang.
+    assert await backfill_toko_transactions(session) == 1
+    tx = await session.get(Transaction, entry.transaction_id)
+    assert tx.debit_account_code == '6.2.01.51'
+    assert await repost_kasbon_entries(session) == 0
+    session.add(Account(code='1.1.04.15', name='Piutang Lainnya (Kasbon)', category='aset', subcategory='aset_lancar',
+                        normal_balance='debit', group_code='UU05', unit_usaha_id=unit.id))
+    await session.flush()
+    assert await repost_kasbon_entries(session) == 1
+    await session.refresh(tx)
+    assert (tx.debit_account_code, tx.credit_account_code) == ('1.1.04.15', '1.1.01.15')
+    assert tx.id == entry.transaction_id and tx.amount == Decimal('40000')
+    assert tx.description == 'Kasbon Kasbon Karyawan - Minggu 2 - 10/2026'
+    assert await session.scalar(select(func.count(JournalEntry.id)).where(JournalEntry.transaction_id == tx.id)) == 1
+    assert await session.get(TokoEntry, entry.id) is not None
+    assert await repost_kasbon_entries(session) == 0

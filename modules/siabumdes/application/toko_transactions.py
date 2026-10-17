@@ -42,6 +42,31 @@ def describe(jenis: str, item_name: str, week: int, period: str) -> str:
     return f"{TYPE_BY_JENIS[jenis][4]} {item_name} - Minggu {week} - {month}/{year}"
 
 
+# Item Perduitan #1 berkata kunci kasbon dijurnal ke Piutang Lainnya, bukan Pendapatan/Beban.
+KASBON = {
+    "pengeluaran": ("kasbon_unit5", "Kasbon"),  # D Piutang Lainnya / K Kas
+    "pemasukan": ("pelunasan_kasbon_unit5", "Pelunasan Kasbon"),  # D Kas / K Piutang Lainnya
+}
+
+
+def is_kasbon_item(name: str) -> bool:
+    from modules.siabumdes.toko.application.neraca import is_piutang_lain
+
+    return is_piutang_lain(name)
+
+
+async def piutang_lain_account(session) -> str | None:
+    """Kode akun Piutang Lainnya/Kasbon aktif di COA UU05 (dikenali dari namanya), atau None."""
+    from modules.siabumdes.toko.application.journal import classify
+
+    rows = (await session.scalars(select(Account).where(Account.group_code == UNIT_CODE, Account.active.is_(True))
+                                  .order_by(Account.code))).all()
+    for a in rows:
+        if a.category and a.category.lower() == "aset" and classify(a.name, a.category, a.subcategory) == "piutang_lainnya":
+            return a.code
+    return None
+
+
 async def toko_unit(session) -> UnitUsaha:
     unit = await session.scalar(select(UnitUsaha).where(UnitUsaha.code == UNIT_CODE))
     if not unit:
@@ -82,12 +107,20 @@ async def apply_entry_transaction(session, actor, unit, entry, item, *, check_pe
         if tx:
             await assert_can_mutate_period(session, actor, tx.date, unit.id)
         await assert_can_mutate_period(session, actor, entry.tanggal, unit.id)
-    kind = await _kind(session, item.jenis)
+    kasbon = await piutang_lain_account(session) if is_kasbon_item(item.name) else None
     tx = tx or Transaction(unit_usaha_id=unit.id, created_by=getattr(actor, "id", None) or "system", proofs=[])
     tx.date, tx.amount = entry.tanggal, entry.nominal
-    tx.transaction_type = kind.code
-    tx.description = describe(item.jenis, item.name, entry.week, entry.period)
-    tx.debit_account_code, tx.credit_account_code = kind.debit, kind.credit
+    if kasbon:
+        code, label = KASBON[item.jenis]
+        tx.transaction_type = code
+        year, month = entry.period.split("-")
+        tx.description = f"{label} {item.name} - Minggu {entry.week} - {month}/{year}"
+        tx.debit_account_code, tx.credit_account_code = (kasbon, CASH) if item.jenis == "pengeluaran" else (CASH, kasbon)
+    else:
+        kind = await _kind(session, item.jenis)
+        tx.transaction_type = kind.code
+        tx.description = describe(item.jenis, item.name, entry.week, entry.period)
+        tx.debit_account_code, tx.credit_account_code = kind.debit, kind.credit
     tx.reference = f"{REFERENCE_PREFIX}{entry.id}"  # entry harus sudah di-flush (id terisi)
     session.add(tx)
     await session.flush()
@@ -127,6 +160,33 @@ async def backfill_toko_transactions(session) -> int:
         await apply_entry_transaction(session, None, unit, entry, item, check_period=False)
     await session.flush()
     return len(rows)
+
+
+async def repost_kasbon_entries(session) -> int:
+    """Boot (idempoten): jurnal otomatis isian kasbon yang masih ke Pendapatan/Beban ditulis ulang
+    ke Piutang Lainnya <-> Kas. Isian pengguna tidak diubah/dihapus; hanya baris jurnal otomatisnya."""
+    from modules.siabumdes.toko.infrastructure.models import TokoEntry, TokoItem
+
+    unit = await session.scalar(select(UnitUsaha).where(UnitUsaha.code == UNIT_CODE))
+    acc = await piutang_lain_account(session)
+    if not unit or not acc:
+        if unit:
+            logger.warning("akun Piutang Lainnya UU05 tidak ditemukan; jurnal kasbon Perduitan #1 tidak dipindah")
+        return 0
+    n = 0
+    rows = (await session.execute(select(TokoEntry, TokoItem).join(TokoItem, TokoItem.id == TokoEntry.item_id)
+                                  .where(TokoEntry.transaction_id.is_not(None)))).all()
+    for entry, item in rows:
+        if not is_kasbon_item(item.name):
+            continue
+        tx = await session.get(Transaction, entry.transaction_id)
+        want = (acc, CASH) if item.jenis == "pengeluaran" else (CASH, acc)
+        if tx is None or (tx.debit_account_code, tx.credit_account_code) == want:
+            continue
+        await apply_entry_transaction(session, None, unit, entry, item, check_period=False)
+        n += 1
+    await session.flush()
+    return n
 
 
 def default_week_date(period: str, week: int) -> str:

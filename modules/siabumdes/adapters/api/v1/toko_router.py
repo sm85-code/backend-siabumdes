@@ -314,6 +314,50 @@ async def neraca(
     }
 
 
+@router.get("/gl")
+async def perduitan3_gl(
+    period: str = Query(...),
+    dates: list[date] = Query(..., max_length=12),
+    _: User = Depends(require_toko_user),
+    session: AsyncSession = Depends(get_db),
+):
+    """Perduitan #3 dari menu Transaksi (semua jurnal Unit 5, otomatis + manual):
+    Laba Rugi mingguan dan posisi Neraca per tanggal, beserta rincian untuk catatan."""
+    from modules.siabumdes.inventory.infrastructure.models import Purchase
+    from modules.siabumdes.toko.application import gl
+    from modules.siabumdes.toko.application.journal import load_journal
+    from modules.siabumdes.toko.application.neraca import load, manual_suspects, position, stok_manajemen
+
+    _check_period(period)
+    rows = await load_journal(session, clamp=False, manual_only=False)
+    lainnya = set((await session.execute(
+        select(TokoEntry.id).join(TokoItem, TokoItem.id == TokoEntry.item_id)
+        .where(func.upper(func.trim(TokoItem.name)) == "LAINNYA"))).scalars())
+    modal_awal = set((await session.execute(
+        select(Purchase.stock_card_id).where(Purchase.payment_method == "modal_awal"))).scalars())
+    data = await load(session)  # pembanding: Manajemen Stok dan utang dari pembelian kredit
+    start = first_monday(period)
+    lr = gl.weekly_laba_rugi(rows, period, lainnya)
+    positions = []
+    for d in dates:
+        positions.append({
+            "date": d.isoformat(),
+            **{k: str(v) for k, v in gl.position(rows, d, period).items()},
+            "kas_detail": {k: str(v) for k, v in gl.kas_detail(rows, start, d).items()},
+            "stok_detail": {k: str(v) for k, v in gl.stok_detail(rows, start, d, modal_awal).items()},
+            "pembanding": {"stok": str(stok_manajemen(data, d)), "utang": str(position(data, d)["utang"])},
+            "manual_suspects": {k: manual_suspects(data, d, k) for k in ("stok", "utang")},
+        })
+    return {
+        "period": period,
+        "laba_rugi": {k: {w: str(v) for w, v in row.items()} for k, row in lr.items()},
+        "positions": positions,
+        "kas_opening": {"date": gl.KAS_OPENING_DATE.isoformat(), "ditetapkan": str(gl.KAS_OPENING),
+                        "gl": str(gl.balances_at(rows, gl.KAS_OPENING_DATE)["kas"])},
+        "stok_manajemen": str(stok_manajemen(data)),
+    }
+
+
 @router.get("/journal")
 async def journal(
     period: str = Query(...),

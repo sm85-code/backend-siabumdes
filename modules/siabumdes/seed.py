@@ -108,6 +108,14 @@ async def seed_if_needed() -> None:
                     logger.info("isian Manajemen Toko ke minggu Senin–Sabtu: %s dipindah, %s dilewati (sel tujuan terisi)", moved, skipped)
             except Exception:
                 logger.exception("pindah minggu isian Manajemen Toko dilewati")
+            try:
+                from modules.siabumdes.application.toko_transactions import repost_kasbon_entries
+                async with session.begin_nested():
+                    reposted = await repost_kasbon_entries(session)
+                if reposted:
+                    logger.info("jurnal kasbon Perduitan #1 ke Piutang Lainnya: %s ditulis ulang", reposted)
+            except Exception:
+                logger.exception("tulis ulang jurnal kasbon Perduitan #1 dilewati")
             existing = await session.get(SystemControl, "default")
             if not existing:
                 session.add(SystemControl(id="default", recording_locked=False))

@@ -100,7 +100,7 @@ async def test_backfill_links_legacy_entries(toko_context):
 
 
 @pytest.mark.asyncio
-async def test_reweek_moves_and_merges_legacy_entries(toko_context):
+async def test_reweek_only_moves_never_merges_or_deletes(toko_context):
     session, admin, _, _, unit, *_ = toko_context
     await _setup(session, unit)
     item = TokoItem(name='Saldo', jenis='pemasukan')
@@ -113,14 +113,14 @@ async def test_reweek_moves_and_merges_legacy_entries(toko_context):
     session.add_all([a, b, c])
     await session.flush()
     assert await backfill_toko_transactions(session) == 3
-    b_tx = b.transaction_id
-    assert await reweek_toko_entries(session) == (2, 1)
+    txs = {e.id: e.transaction_id for e in (a, b, c)}
+    assert await reweek_toko_entries(session) == (1, 2)
     rows = {(e.period, e.week): e for e in (await session.execute(select(TokoEntry))).scalars()}
-    assert set(rows) == {('2026-09', 4), ('2026-10', 1)}
-    sep = rows[('2026-09', 4)]
-    assert sep.nominal == Decimal('150') and sep.tanggal == date(2026, 10, 2)
-    tx = await session.get(Transaction, sep.transaction_id)
-    assert tx.amount == Decimal('150') and tx.description == 'Pendapatan Saldo - Minggu 4 - 09/2026'
-    assert await session.get(Transaction, b_tx) is None
-    assert (await session.get(Transaction, rows[('2026-10', 1)].transaction_id)).description == 'Pendapatan Saldo - Minggu 1 - 10/2026'
-    assert await reweek_toko_entries(session) == (0, 0)
+    # a pindah ke Sep w4; b (2 Okt) mestinya juga Sep w4 tapi sel terisi -> tetap di Okt w1;
+    # c (8 Okt) mestinya Okt w1 yang masih ditempati b -> tetap di Okt w2. Tidak ada yang digabung/dihapus.
+    assert {k: e.id for k, e in rows.items()} == {('2026-09', 4): a.id, ('2026-10', 1): b.id, ('2026-10', 2): c.id}
+    assert [rows[k].nominal for k in sorted(rows)] == [Decimal('100'), Decimal('50'), Decimal('70')]
+    for e in (a, b, c):
+        assert (await session.get(Transaction, txs[e.id])).amount == e.nominal
+    assert (await session.get(Transaction, a.transaction_id)).description == 'Pendapatan Saldo - Minggu 4 - 09/2026'
+    assert await reweek_toko_entries(session) == (0, 2)

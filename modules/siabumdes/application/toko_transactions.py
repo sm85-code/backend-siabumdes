@@ -4,6 +4,8 @@ Setiap isian sel Minggu (toko_entries) punya satu transaksi + jurnal di unit UU0
 dengan reference ``TOKO:<entry_id>``. Transaksi ini hanya bisa diubah/dihapus dari
 menu Manajemen Toko; dari halaman Transaksi hanya bukti (proof) yang dikelola.
 """
+import logging
+
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
@@ -12,6 +14,8 @@ from modules.siabumdes.adapters.api.scope import assert_can_mutate_period, asser
 from modules.siabumdes.application.transaction_journal import sync_transaction_journal
 from modules.siabumdes.application.transaction_proofs import delete_transaction_proofs
 from modules.siabumdes.infrastructure.models import Account, JournalEntry, Transaction, TransactionType, UnitUsaha
+
+logger = logging.getLogger(__name__)
 
 UNIT_CODE = "UU05"
 REFERENCE_PREFIX = "TOKO:"
@@ -133,11 +137,11 @@ def default_week_date(period: str, week: int) -> str:
 
 
 async def reweek_toko_entries(session) -> tuple[int, int]:
-    """Boot (idempoten): pindahkan isian lama ke minggu Senin–Sabtu sesuai tanggalnya.
+    """Boot (idempoten): pindahkan nomor minggu isian lama ke minggu Senin–Sabtu sesuai tanggalnya.
 
-    Isian yang jatuh ke sel yang sama (item, periode, minggu) digabung: nominal dijumlah,
-    tanggal = yang terakhir, bukti transaksi dipindah, transaksi isian yang digabung dihapus.
-    Return (dipindah, digabung)."""
+    Hanya memindah periode/minggu; tidak pernah menggabung atau menghapus isian/transaksi.
+    Bila sel tujuan (item, periode, minggu) sudah terisi, isian dibiarkan di sel lamanya dan dicatat di log.
+    Return (dipindah, dilewati)."""
     from modules.siabumdes.toko.application.weeks import trade_week
     from modules.siabumdes.toko.infrastructure.models import TokoEntry, TokoItem
 
@@ -145,39 +149,22 @@ async def reweek_toko_entries(session) -> tuple[int, int]:
     rows = (await session.execute(select(TokoEntry, TokoItem).join(TokoItem, TokoItem.id == TokoEntry.item_id)
                                   .order_by(TokoEntry.tanggal, TokoEntry.id))).all()
     cells = {(e.item_id, e.period, e.week): e for e, _ in rows}
-    wrong = [(e, i) for e, i in rows if (e.period, e.week) != trade_week(e.tanggal)]
-    moved = merged = 0
-    for entry, item in wrong:
+    moved = skipped = 0
+    for entry, item in rows:
         period, week = trade_week(entry.tanggal)
-        cells.pop((entry.item_id, entry.period, entry.week), None)
-        target = cells.get((entry.item_id, period, week))
-        if target is None:
-            entry.period, entry.week = period, week
-            cells[(entry.item_id, period, week)] = entry
-            await session.flush()
-            if unit and entry.transaction_id:
-                await apply_entry_transaction(session, None, unit, entry, item, check_period=False)
-            moved += 1
+        if (entry.period, entry.week) == (period, week):
             continue
-        target.nominal = (target.nominal or 0) + (entry.nominal or 0)
-        target.tanggal = max(target.tanggal, entry.tanggal)
-        tx = await session.get(Transaction, entry.transaction_id) if entry.transaction_id else None
-        if tx:
-            if target.transaction_id:
-                ttx = await session.get(Transaction, target.transaction_id)
-                if ttx is not None:
-                    ttx.proofs = list(ttx.proofs or []) + list(tx.proofs or [])
-            entry.transaction_id = None
-            await session.flush()
-            journal = await session.scalar(select(JournalEntry).where(JournalEntry.transaction_id == tx.id))
-            if journal:
-                await session.delete(journal)
-                await session.flush()
-            await session.delete(tx)
-        await session.delete(entry)
+        if (entry.item_id, period, week) in cells:
+            logger.warning("isian toko %s (%s %s/%s, %s) tidak dipindah ke %s minggu %s: sel sudah terisi",
+                           entry.id, item.name, entry.period, entry.week, entry.tanggal, period, week)
+            skipped += 1
+            continue
+        cells.pop((entry.item_id, entry.period, entry.week), None)
+        entry.period, entry.week = period, week
+        cells[(entry.item_id, period, week)] = entry
         await session.flush()
-        if unit:
-            await apply_entry_transaction(session, None, unit, target, item, check_period=False)
-        merged += 1
+        if unit and entry.transaction_id:
+            await apply_entry_transaction(session, None, unit, entry, item, check_period=False)
+        moved += 1
     await session.flush()
-    return moved, merged
+    return moved, skipped

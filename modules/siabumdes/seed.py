@@ -103,9 +103,9 @@ async def seed_if_needed() -> None:
             try:
                 from modules.siabumdes.application.toko_transactions import reweek_toko_entries
                 async with session.begin_nested():
-                    moved, merged = await reweek_toko_entries(session)
-                if moved or merged:
-                    logger.info("isian Manajemen Toko ke minggu Senin–Sabtu: %s dipindah, %s digabung", moved, merged)
+                    moved, skipped = await reweek_toko_entries(session)
+                if moved or skipped:
+                    logger.info("isian Manajemen Toko ke minggu Senin–Sabtu: %s dipindah, %s dilewati (sel tujuan terisi)", moved, skipped)
             except Exception:
                 logger.exception("pindah minggu isian Manajemen Toko dilewati")
             existing = await session.get(SystemControl, "default")

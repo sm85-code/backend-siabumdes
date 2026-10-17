@@ -144,5 +144,20 @@ def position(rows: list[JournalRow], d: date, period: str) -> dict[str, Decimal]
     """Neraca per tanggal d: saldo akun Unit 5; Laba/Rugi Periode Lalu = s.d. sehari sebelum
     Senin Minggu ke-1 periode, Periode Berjalan = sejak Senin Minggu ke-1 s.d. d."""
     start = first_monday(period) - timedelta(days=1)
-    return {**balances_at(rows, d), "kas": kas_at(rows, d), "laba_lalu": laba_at(rows, min(start, d)),
+    return {**balances_at(rows, d), "kas": kas_at(rows, d),
+            "laba_lalu": laba_at(rows, min(start, d)) - distributed_at(rows, d),
             "laba_berjalan": laba_at(rows, d, after=start) if d > start else ZERO}
+
+
+def distributed_at(rows: list[JournalRow], d: date) -> Decimal:
+    """Laba yang sudah dibagikan (bagi hasil/imbal hasil) s.d. d, dari sisi pos Neraca jurnalnya.
+
+    Pembagian laba bukan beban (tidak masuk Laba Rugi), tetapi mengurangi saldo laba: kas yang keluar
+    untuk bagi hasil harus mengurangi Laba/Rugi Periode Lalu, kalau tidak Neraca selisih sebesar
+    bagi hasil yang dibayar. Nilai = penurunan (aset − utang − modal) akibat jurnal tsb."""
+    out = ZERO
+    for r in rows:
+        if r.date <= d and not is_closing(r) and is_profit_distribution(r):
+            for k, v in r.balance_deltas().items():
+                out -= v if k in ("kas", "stok", "piutang", "piutang_lainnya") else -v
+    return out

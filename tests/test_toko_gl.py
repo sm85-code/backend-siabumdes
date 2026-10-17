@@ -45,7 +45,7 @@ def test_neraca_saldo_akun_dan_laba():
     p = gl.position(ROWS, date(2026, 10, 18), "2026-10")
     assert p["modal"] == 30_000_000 and p["piutang_lainnya"] == 40
     assert p["stok"] == 400 - 200 - 20
-    assert p["laba_lalu"] == 150  # s.d. 4 Okt
+    assert p["laba_lalu"] == 150 - 10  # s.d. 4 Okt, dikurangi bagi hasil yang dibayar dari Kas
     assert p["laba_berjalan"] == 1000 + 70 + 300 - 200 - 20 - 90 - 15
     # Kas = 2.124.500 (30 Sep) + pergerakan Kas sejak 1 Okt; jurnal Kas September diabaikan.
     kas = 2_124_500 + 50 + 1000 + 70 - 400 + 300 - 90 - 15 - 40 - 10

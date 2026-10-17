@@ -264,6 +264,24 @@ def kas_breakdown(data: Data, d: date) -> dict[str, Decimal]:
     return out
 
 
+async def load_stock(session, data: Data) -> Data:
+    """Produk dan mutasi qty (kartu stok + penyesuaian) untuk penilaian stok seperti Manajemen Stok."""
+    for p in (await session.scalars(select(Product))).all():
+        data.products[p.id] = (int(p.qty_on_hand or 0), Decimal(p.cost_price or 0))
+    methods = dict((await session.execute(select(Purchase.stock_card_id, Purchase.payment_method))).all())
+    for c in (await session.scalars(select(StockCard).where(StockCard.finance_status != "cancelled"))).all():
+        if c.direction == "in":
+            m = methods.get(c.nota_id or c.id)
+            kind = "masuk_lainnya" if m is None else "masuk_modal_awal" if m == "modal_awal" else "masuk_reguler"
+            data.moves.append((c.movement_date, c.product_id, c.quantity, kind))
+        else:
+            kind = "keluar_penjualan" if (c.movement_kind or "sale") == "sale" else "keluar_internal"
+            data.moves.append((c.movement_date, c.product_id, -c.quantity, kind))
+    for a in (await session.scalars(select(StockAdjustment))).all():
+        data.moves.append((a.adjustment_date, a.product_id, a.quantity_delta, "penyesuaian"))
+    return data
+
+
 async def load(session) -> Data:
     data = Data()
     for s, d in (await session.execute(
@@ -283,19 +301,7 @@ async def load(session) -> Data:
     )).all():
         # Nilai penyesuaian tidak disimpan; pakai HPP produk (sama seperti jurnal penyesuaian).
         data.adjustments.append((a.adjustment_date, Decimal(cost) * a.quantity_delta))
-    for p in (await session.scalars(select(Product))).all():
-        data.products[p.id] = (int(p.qty_on_hand or 0), Decimal(p.cost_price or 0))
-    methods = dict((await session.execute(select(Purchase.stock_card_id, Purchase.payment_method))).all())
-    for c in (await session.scalars(select(StockCard).where(StockCard.finance_status != "cancelled"))).all():
-        if c.direction == "in":
-            m = methods.get(c.nota_id or c.id)
-            kind = "masuk_lainnya" if m is None else "masuk_modal_awal" if m == "modal_awal" else "masuk_reguler"
-            data.moves.append((c.movement_date, c.product_id, c.quantity, kind))
-        else:
-            kind = "keluar_penjualan" if (c.movement_kind or "sale") == "sale" else "keluar_internal"
-            data.moves.append((c.movement_date, c.product_id, -c.quantity, kind))
-    for a in (await session.scalars(select(StockAdjustment))).all():
-        data.moves.append((a.adjustment_date, a.product_id, a.quantity_delta, "penyesuaian"))
+    await load_stock(session, data)
     # Persediaan menurut Laporan Keuangan: transaksi unit UU05, akun grup UU05 berawalan 1.1.05.
     inv = {a.code: a.normal_balance for a in (await session.scalars(
         select(Account).where(Account.group_code == "UU05", Account.code.startswith("1.1.05")))).all()}

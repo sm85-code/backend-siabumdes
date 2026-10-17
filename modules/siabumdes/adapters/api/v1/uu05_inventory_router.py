@@ -664,6 +664,20 @@ async def report_valuation(
     return await InventoryService(session).stock_valuation_report()
 
 
+@router.get("/reports/valuation-as-of")
+async def report_valuation_as_of(
+    dates: list[date] = Query(..., max_length=12),
+    _: User = Depends(require_inventory_user),
+    session: AsyncSession = Depends(get_db),
+):
+    """Nilai persediaan (qty × HPP produk saat ini) per tanggal, dimundurkan dengan membatalkan
+    kartu stok/penyesuaian sesudah tanggal itu; sama dengan Stok di Neraca Manajemen Toko."""
+    from modules.siabumdes.toko.application.neraca import Data, load_stock, stok_manajemen
+
+    data = await load_stock(session, Data())
+    return {"today": str(stok_manajemen(data)), "values": [{"date": d.isoformat(), "value": str(stok_manajemen(data, d))} for d in dates]}
+
+
 @router.get("/reports/remaining-by-source")
 async def report_remaining_by_source(
     as_of: Optional[date] = None,

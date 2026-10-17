@@ -44,7 +44,7 @@ def test_saldo_awal_oktober():
     p = position_with_opening(data, date(2026, 10, 3))
     assert p["kas"] == OPENING["kas"] + 100 and p["laba"] == D("100")
     assert OPENING["piutang"] == 0 and OPENING["piutang_lainnya"] == 0 and OPENING["kas"] == D("2124500")
-    assert position_with_opening(data, OPENING_DATE)["piutang_lainnya"] == D("9200000")
+    assert position_with_opening(data, OPENING_DATE)["piutang_lainnya"] == 0
     # Pelunasan 10 Okt atas penjualan piutang 20 Sep; kas bon 12 Okt.
     data.sales.append(Trade(date(2026, 9, 20), D("300"), "piutang", [(date(2026, 10, 10), D("300"))]))
     data.piutang_lain.append((date(2026, 10, 12), D("50")))
@@ -127,7 +127,7 @@ def test_modal_dan_belanja_modal_awal_september():
         cards=[(date(2026, 9, 2), "in", D("9000000")), (date(2026, 10, 6), "out", D("1000000"))],
     )
     sep = position_with_opening(data, date(2026, 9, 27))
-    assert sep["kas"] == D("30000000") - D("9000000") - D("9200000") and sep["stok"] == D("9000000")
+    assert sep["kas"] == D("30000000") - D("9000000") and sep["stok"] == D("9000000")
     assert kas_breakdown(data, date(2026, 9, 27))["kas_akhir"] == sep["kas"]
     okt = position_with_opening(data, date(2026, 10, 11))
     # Stok = nilai kartu stok kumulatif; Kas Oktober dari saldo awal (efek kas September sudah di dalamnya).
@@ -158,3 +158,10 @@ def test_stok_neraca_sama_dengan_manajemen_stok():
     data.manual_rows = [salah]
     assert [r["nominal"] for r in manual_suspects(data, date(2026, 10, 18), "stok")] == ["500"]
     assert manual_suspects(data, date(2026, 10, 18), "utang") == []
+
+
+def test_kasbon_perduitan_tidak_dobel_dengan_transaksi_manual():
+    from modules.siabumdes.toko.application.neraca import dedupe_kasbon
+    kasbon = [(date(2026, 10, 10), D("-500")), (date(2026, 10, 10), D("200"))]
+    manual = [(date(2026, 10, 8), D("-500"))]
+    assert dedupe_kasbon(kasbon, manual) == [(date(2026, 10, 10), D("200"))]

@@ -304,7 +304,7 @@ async def neraca(
             "kas_detail": {k: str(v) for k, v in kas_breakdown(data, d).items()},
             "ledger": {k: str(v) for k, v in ledger_at(data, d).items()},
             # Transaksi manual yang mengenai pos ini (dugaan penyebab selisih vs menu Transaksi).
-            "manual_suspects": {k: manual_suspects(data, d, k) for k in ("stok", "kas", "piutang", "piutang_lainnya", "utang")},
+            "manual_suspects": {k: manual_suspects(data, d, k) for k in ("stok", "utang")},
         })
     return {
         "modal": str(MODAL), "opening_date": OPENING_DATE.isoformat(), "positions": out,

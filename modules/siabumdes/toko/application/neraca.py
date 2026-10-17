@@ -36,7 +36,6 @@ OPENING = {
     "piutang_lainnya": ZERO,  # saldo awal 9.700.000 diabaikan (permintaan pengguna)
     "utang": ZERO,
 }
-PIUTANG_LAIN_LAMA = Decimal("9200000")
 # Perduitan membaca transaksi menu Transaksi mulai tanggal ini; sebelumnya diabaikan.
 JOURNAL_START = date(2026, 9, 1)
 # Khusus Kas: untuk tanggal setelah OPENING_DATE, transaksi menu Transaksi September diabaikan
@@ -82,6 +81,20 @@ PIUTANG_LAIN_KEYS = ("kas bon", "kasbon", "piutang lain", "pinjam")
 def is_piutang_lain(name: str) -> bool:
     n = " ".join((name or "").lower().split())
     return any(k in n for k in PIUTANG_LAIN_KEYS)
+
+
+def dedupe_kasbon(kasbon: list[tuple[date, Decimal]], manual: list[tuple[date, Decimal]]) -> list[tuple[date, Decimal]]:
+    """Kasbon Perduitan yang sudah dicatat manual di menu Transaksi (nominal & arah sama,
+    selisih tanggal <= 7 hari) dilewati agar Piutang Lainnya dan Kas tidak dobel."""
+    left = list(manual)
+    out = []
+    for t, v in kasbon:
+        hit = next((m for m in left if m[1] == v and abs((m[0] - t).days) <= 7), None)
+        if hit:
+            left.remove(hit)
+        else:
+            out.append((t, v))
+    return out
 
 
 def _paid(t: Trade, d: date, credit: str) -> Decimal:
@@ -145,9 +158,8 @@ def _base_position(data: Data, d: date) -> dict[str, Decimal]:
     p = position(data, d)
     if d <= OPENING_DATE:
         # Sebelum saldo awal: kas dimulai dari Modal sebelum 1 Sep (modal sejak 1 Sep masuk lewat
-        # sisi Kas jurnalnya); Piutang Lainnya lama 9,2 jt dipinjamkan dari kas.
-        p["kas"] += modal_before_journal(data) - PIUTANG_LAIN_LAMA
-        p["piutang_lainnya"] += PIUTANG_LAIN_LAMA
+        # sisi Kas jurnalnya). Piutang Usaha/Lainnya September murni dari transaksi manual.
+        p["kas"] += modal_before_journal(data)
         return p
     base = position(data, OPENING_DATE)
     out = {k: OPENING[k] + p[k] - base[k] for k in ("kas", "piutang", "utang", "piutang_lainnya")}
@@ -225,7 +237,7 @@ def kas_breakdown(data: Data, d: date) -> dict[str, Decimal]:
     pay = lambda trades, method: sum((a for x in trades if x.method == method for t, a in x.payments if rng(t)), ZERO)  # noqa: E731
     jk = [x.get("kas", ZERO) for t, x in data.journal if jstart <= t <= d]
     out = {
-        "kas_awal": OPENING["kas"] if after else modal_before_journal(data) - PIUTANG_LAIN_LAMA,
+        "kas_awal": OPENING["kas"] if after else modal_before_journal(data),
         "masuk_perduitan": sum((n for t, j, n in data.entries if rng(t) and j == "pemasukan"), ZERO),
         "masuk_penjualan_tunai": sum((x.total for x in data.sales if rng(x.date) and x.method != "piutang"), ZERO),
         "masuk_pelunasan_piutang": pay(data.sales, "piutang"),
@@ -268,11 +280,12 @@ async def load(session) -> Data:
         data.moves.append((c.movement_date, c.product_id, c.quantity if c.direction == "in" else -c.quantity))
     for a in (await session.scalars(select(StockAdjustment))).all():
         data.moves.append((a.adjustment_date, a.product_id, a.quantity_delta))
+    kasbon: list[tuple[date, Decimal]] = []
     for e, jenis, name in (await session.execute(
         select(TokoEntry, TokoItem.jenis, TokoItem.name).join(TokoItem, TokoEntry.item_id == TokoItem.id)
     )).all():
         if is_piutang_lain(name):
-            data.piutang_lain.append((e.tanggal, Decimal(e.nominal) * (-1 if jenis == "pemasukan" else 1)))
+            kasbon.append((e.tanggal, Decimal(e.nominal) * (-1 if jenis == "pemasukan" else 1)))
         else:
             data.entries.append((e.tanggal, jenis, Decimal(e.nominal)))
     # Transaksi manual dari menu Transaksi (unit UU05), dipetakan lewat akun COA.
@@ -285,4 +298,7 @@ async def load(session) -> Data:
             data.modal.append((row.date, row.modal_delta))
         if row.date >= JOURNAL_START and row.deltas():
             data.journal.append((row.date, row.deltas()))
+    manual_pl = [(r.date, r.deltas().get("piutang_lainnya", ZERO)) for r in data.manual_rows
+                 if r.date >= JOURNAL_START and r.deltas().get("piutang_lainnya")]
+    data.piutang_lain = dedupe_kasbon(kasbon, manual_pl)
     return data

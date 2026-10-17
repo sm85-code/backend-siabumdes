@@ -18,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from modules.siabumdes.inventory.infrastructure.models import Product, Purchase, Sale, StockAdjustment, StockCard
+from modules.siabumdes.infrastructure.models import Account, Transaction, UnitUsaha
 from modules.siabumdes.toko.application.journal import load_journal
 from modules.siabumdes.toko.infrastructure.models import TokoEntry, TokoItem
 
@@ -69,7 +70,10 @@ class Data:
     # Manajemen Stok (sumber kebenaran Stok): produk {id: (qty_on_hand, cost_price)} dan
     # mutasi qty per produk (tanggal, product_id, +masuk/-keluar/penyesuaian).
     products: dict[str, tuple[int, Decimal]] = field(default_factory=dict)
-    moves: list[tuple[date, str, int]] = field(default_factory=list)
+    # Elemen ke-4 (opsional) = jenis mutasi untuk catatan pergerakan stok.
+    moves: list[tuple] = field(default_factory=list)
+    # Saldo akun Persediaan (1.1.05.xx) persis seperti Neraca Laporan Keuangan Unit 5: (tanggal, +debit/-kredit).
+    gl_persediaan: list[tuple[date, Decimal]] = field(default_factory=list)
     # Transaksi manual menu Transaksi (semua tanggal) untuk daftar dugaan penyebab selisih.
     manual_rows: list = field(default_factory=list)
 
@@ -170,10 +174,28 @@ def stok_manajemen(data: Data, d: date | None = None) -> Decimal:
     dengan membatalkan mutasi kartu stok/penyesuaian sesudah d. d=None: nilai hari ini."""
     after: dict[str, int] = {}
     if d is not None:
-        for t, pid, q in data.moves:
+        for t, pid, q, *_ in data.moves:
             if t > d:
                 after[pid] = after.get(pid, 0) + q
     return sum((cost * (qty - after.get(pid, 0)) for pid, (qty, cost) in data.products.items()), ZERO)
+
+
+STOK_KINDS = ("masuk_reguler", "masuk_modal_awal", "masuk_lainnya", "keluar_penjualan", "keluar_internal", "penyesuaian")
+
+
+def stok_breakdown(data: Data, d: date, period_start: date) -> dict[str, Decimal]:
+    """Pergerakan Stok periode (period_start s.d. d) dengan HPP produk saat ini, sama dengan cara
+    Neraca/Manajemen Stok menilai stok, jadi stok_awal + mutasi = stok_akhir = Stok di Neraca."""
+    awal_date = period_start - timedelta(days=1)
+    cost = {pid: c for pid, (_, c) in data.products.items()}
+    out = {"stok_awal": stok_manajemen(data, awal_date), **{k: ZERO for k in STOK_KINDS}}
+    for t, pid, q, *kind in data.moves:
+        if awal_date < t <= d and pid in cost:
+            k = kind[0] if kind else ("masuk_lainnya" if q > 0 else "keluar_internal")
+            out[k] += cost[pid] * q
+    out["stok_akhir"] = stok_manajemen(data, d)
+    out["gl_persediaan"] = sum((v for t, v in data.gl_persediaan if t <= d), ZERO)
+    return out
 
 
 def manual_suspects(data: Data, d: date, pos: str, limit: int = 10) -> list[dict]:
@@ -263,10 +285,25 @@ async def load(session) -> Data:
         data.adjustments.append((a.adjustment_date, Decimal(cost) * a.quantity_delta))
     for p in (await session.scalars(select(Product))).all():
         data.products[p.id] = (int(p.qty_on_hand or 0), Decimal(p.cost_price or 0))
+    methods = dict((await session.execute(select(Purchase.stock_card_id, Purchase.payment_method))).all())
     for c in (await session.scalars(select(StockCard).where(StockCard.finance_status != "cancelled"))).all():
-        data.moves.append((c.movement_date, c.product_id, c.quantity if c.direction == "in" else -c.quantity))
+        if c.direction == "in":
+            m = methods.get(c.nota_id or c.id)
+            kind = "masuk_lainnya" if m is None else "masuk_modal_awal" if m == "modal_awal" else "masuk_reguler"
+            data.moves.append((c.movement_date, c.product_id, c.quantity, kind))
+        else:
+            kind = "keluar_penjualan" if (c.movement_kind or "sale") == "sale" else "keluar_internal"
+            data.moves.append((c.movement_date, c.product_id, -c.quantity, kind))
     for a in (await session.scalars(select(StockAdjustment))).all():
-        data.moves.append((a.adjustment_date, a.product_id, a.quantity_delta))
+        data.moves.append((a.adjustment_date, a.product_id, a.quantity_delta, "penyesuaian"))
+    # Persediaan menurut Laporan Keuangan: transaksi unit UU05, akun grup UU05 berawalan 1.1.05.
+    inv = {a.code: a.normal_balance for a in (await session.scalars(
+        select(Account).where(Account.group_code == "UU05", Account.code.startswith("1.1.05")))).all()}
+    for t in (await session.scalars(select(Transaction).join(UnitUsaha, Transaction.unit_usaha_id == UnitUsaha.id)
+                                      .where(UnitUsaha.code == "UU05"))).all():
+        v = (Decimal(t.amount) if t.debit_account_code in inv else ZERO) - (Decimal(t.amount) if t.credit_account_code in inv else ZERO)
+        if v:
+            data.gl_persediaan.append((t.date, v))
     for e, jenis, name in (await session.execute(
         select(TokoEntry, TokoItem.jenis, TokoItem.name).join(TokoItem, TokoEntry.item_id == TokoItem.id)
     )).all():

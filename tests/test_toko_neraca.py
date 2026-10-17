@@ -168,3 +168,17 @@ def test_piutang_usaha_hanya_dari_transaksi_manual():
     p = position_with_opening(data, date(2026, 10, 11))
     # Penjualan piutang Stock Out: pendapatan di laba, Kas saat dilunasi, tetapi tidak di Piutang Usaha.
     assert p["piutang"] == D("250") and p["kas"] == OPENING["kas"] + 300 and p["laba"] == D("950")
+
+
+def test_catatan_pergerakan_stok_sama_dengan_neraca():
+    from modules.siabumdes.toko.application.neraca import stok_breakdown
+    data = Data(products={"a": (6, D("1000"))}, moves=[
+        (date(2026, 9, 2), "a", 10, "masuk_modal_awal"), (date(2026, 10, 6), "a", 2, "masuk_reguler"),
+        (date(2026, 10, 7), "a", -5, "keluar_penjualan"), (date(2026, 10, 8), "a", -1, "penyesuaian"),
+    ], gl_persediaan=[(date(2026, 9, 2), D("10000")), (date(2026, 10, 6), D("1500"))])
+    k = stok_breakdown(data, date(2026, 10, 11), date(2026, 10, 1))
+    assert k["stok_awal"] == D("10000") and k["masuk_reguler"] == D("2000") and k["keluar_penjualan"] == D("-5000")
+    assert k["stok_awal"] + sum(k[x] for x in ("masuk_reguler", "masuk_modal_awal", "masuk_lainnya", "keluar_penjualan",
+                                                "keluar_internal", "penyesuaian")) == k["stok_akhir"]
+    assert k["stok_akhir"] == position_with_opening(data, date(2026, 10, 11))["stok"] == D("6000")
+    assert k["gl_persediaan"] == D("11500")

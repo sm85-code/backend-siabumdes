@@ -126,13 +126,58 @@ async def backfill_toko_transactions(session) -> int:
 
 
 def default_week_date(period: str, week: int) -> str:
-    """Sama dengan UI: Sabtu minggu ke-N (minggu ke-1 = tgl 1 s.d. Sabtu pertama);
-    bila tidak ada, hari setelah Sabtu minggu ke-4 atau akhir bulan."""
-    import calendar
-    from datetime import date as _date
-    year, month = (int(x) for x in period.split("-"))
-    last = calendar.monthrange(year, month)[1]
-    first_saturday = 1 + (5 - _date(year, month, 1).weekday()) % 7
-    saturday = first_saturday + (week - 1) * 7
-    day = saturday if saturday <= last else min(first_saturday + 22, last)
-    return f"{period}-{day:02d}"
+    """Sama dengan UI: Sabtu minggu ke-N (minggu Senin–Sabtu mulai Senin pertama bulan)."""
+    from modules.siabumdes.toko.application.weeks import week_count, week_saturday
+
+    return week_saturday(period, min(week, week_count(period))).isoformat()
+
+
+async def reweek_toko_entries(session) -> tuple[int, int]:
+    """Boot (idempoten): pindahkan isian lama ke minggu Senin–Sabtu sesuai tanggalnya.
+
+    Isian yang jatuh ke sel yang sama (item, periode, minggu) digabung: nominal dijumlah,
+    tanggal = yang terakhir, bukti transaksi dipindah, transaksi isian yang digabung dihapus.
+    Return (dipindah, digabung)."""
+    from modules.siabumdes.toko.application.weeks import trade_week
+    from modules.siabumdes.toko.infrastructure.models import TokoEntry, TokoItem
+
+    unit = await session.scalar(select(UnitUsaha).where(UnitUsaha.code == UNIT_CODE))
+    rows = (await session.execute(select(TokoEntry, TokoItem).join(TokoItem, TokoItem.id == TokoEntry.item_id)
+                                  .order_by(TokoEntry.tanggal, TokoEntry.id))).all()
+    cells = {(e.item_id, e.period, e.week): e for e, _ in rows}
+    wrong = [(e, i) for e, i in rows if (e.period, e.week) != trade_week(e.tanggal)]
+    moved = merged = 0
+    for entry, item in wrong:
+        period, week = trade_week(entry.tanggal)
+        cells.pop((entry.item_id, entry.period, entry.week), None)
+        target = cells.get((entry.item_id, period, week))
+        if target is None:
+            entry.period, entry.week = period, week
+            cells[(entry.item_id, period, week)] = entry
+            await session.flush()
+            if unit and entry.transaction_id:
+                await apply_entry_transaction(session, None, unit, entry, item, check_period=False)
+            moved += 1
+            continue
+        target.nominal = (target.nominal or 0) + (entry.nominal or 0)
+        target.tanggal = max(target.tanggal, entry.tanggal)
+        tx = await session.get(Transaction, entry.transaction_id) if entry.transaction_id else None
+        if tx:
+            if target.transaction_id:
+                ttx = await session.get(Transaction, target.transaction_id)
+                if ttx is not None:
+                    ttx.proofs = list(ttx.proofs or []) + list(tx.proofs or [])
+            entry.transaction_id = None
+            await session.flush()
+            journal = await session.scalar(select(JournalEntry).where(JournalEntry.transaction_id == tx.id))
+            if journal:
+                await session.delete(journal)
+                await session.flush()
+            await session.delete(tx)
+        await session.delete(entry)
+        await session.flush()
+        if unit:
+            await apply_entry_transaction(session, None, unit, target, item, check_period=False)
+        merged += 1
+    await session.flush()
+    return moved, merged

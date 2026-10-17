@@ -100,6 +100,14 @@ async def seed_if_needed() -> None:
                     logger.info("backfill %s transaksi Manajemen Toko", created)
             except Exception:
                 logger.exception("backfill transaksi Manajemen Toko dilewati")
+            try:
+                from modules.siabumdes.application.toko_transactions import reweek_toko_entries
+                async with session.begin_nested():
+                    moved, merged = await reweek_toko_entries(session)
+                if moved or merged:
+                    logger.info("isian Manajemen Toko ke minggu Senin–Sabtu: %s dipindah, %s digabung", moved, merged)
+            except Exception:
+                logger.exception("pindah minggu isian Manajemen Toko dilewati")
             existing = await session.get(SystemControl, "default")
             if not existing:
                 session.add(SystemControl(id="default", recording_locked=False))

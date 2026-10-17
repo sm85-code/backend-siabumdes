@@ -103,12 +103,15 @@ def test_delete_item_without_entries_allowed():
 
 
 def test_week5_saturday_detection():
-    assert tr.week5_has_saturday('2026-10')  # Sabtu: 3,10,17,24,31
-    assert not tr.week5_has_saturday('2026-02')  # Sabtu: 7,14,21,28
+    assert tr.week5_has_saturday('2026-08')  # Senin: 3,10,17,24,31
+    assert not tr.week5_has_saturday('2026-10')  # Senin: 5,12,19,26
+    assert not tr.week5_has_saturday('2026-02')  # Senin: 2,9,16,23
 
 
 @pytest.mark.parametrize('week,tanggal,status', [
-    (5, '2026-03-01', 422), (5, '2026-02-28', 404), (1, '2026-01-31', 422), (2, '2026-02-03', 404),
+    # Feb 2026: Minggu ke-1 = 2–8 Feb, ke-4 = 23 Feb–1 Mar, tidak ada Minggu ke-5
+    (5, '2026-02-28', 422), (1, '2026-02-01', 422), (2, '2026-02-03', 422), (1, '2026-02-03', 404),
+    (1, '2026-02-08', 404), (4, '2026-03-01', 404),
 ])
 def test_entry_date_must_be_in_period(week, tanggal, status):
     class S(_Session):

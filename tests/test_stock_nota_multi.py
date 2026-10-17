@@ -45,7 +45,8 @@ HEADER = dict(movement_date=date(2026, 10, 14), unit_usaha_id="u1", debit_accoun
 @pytest.mark.asyncio
 async def test_nota_satu_jurnal_satu_purchase():
     svc, added = _svc([_p("oyek", 0, "0"), _p("gula", 5, "6000")])
-    with patch.object(stock_mixin, "validate_coa_codes", AsyncMock()):
+    with patch.object(stock_mixin, "validate_coa_codes", AsyncMock()), \
+            patch.object(stock_mixin, "assign_receipt_number", AsyncMock()):
         cards = await svc.stock_in_nota(lines=[
             {"product_id": "oyek", "quantity": 10, "unit_cost": Decimal("5000")},
             {"product_id": "gula", "quantity": 2, "unit_cost": Decimal("6000")},

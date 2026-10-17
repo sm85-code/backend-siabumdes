@@ -16,6 +16,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -83,6 +84,9 @@ class StockCard(Base):
     __tablename__ = "stock_cards"
     __table_args__ = (
         Index("ix_stock_cards_product_date", "product_id", "movement_date"),
+        # Nomor nota otomatis unik per unit (hanya kartu kepala nota yang bernomor).
+        Index("uq_stock_cards_doc_number", "doc_unit_id", "doc_number", unique=True,
+              postgresql_where=text("doc_number IS NOT NULL")),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
@@ -104,6 +108,9 @@ class StockCard(Base):
     )  # pending | posted | cancelled
     # Satu nota (multi-baris) = id kartu kepala; NULL untuk data lama (1 baris).
     nota_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    # Nomor nota otomatis (mis. PO-BUD-M1-001/X/2026-2); diberikan sekali saat simpan, tidak dihitung ulang.
+    doc_number: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    doc_unit_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     product: Mapped["Product"] = relationship(back_populates="stock_cards")
@@ -305,6 +312,16 @@ class DocNumber(Base):
     partner_id: Mapped[str] = mapped_column(String(36), nullable=False)
     seq: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class ReceiptCounter(Base):
+    """Penghitung nomor nota per (unit, jenis, minggu, mitra); hanya naik, tidak pernah dipakai ulang."""
+    __tablename__ = 'inventory_receipt_counters'
+    unit_usaha_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16), primary_key=True)  # po | invoice | ma | int
+    week_start: Mapped[date] = mapped_column(Date, primary_key=True)
+    partner_key: Mapped[str] = mapped_column(String(36), primary_key=True)  # '' tanpa mitra
+    last_seq: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
 class SupplierCatalogAccess(Base):

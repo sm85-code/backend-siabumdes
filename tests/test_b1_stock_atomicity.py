@@ -101,6 +101,8 @@ async def test_concurrent_stock_out_cannot_oversell():
     )
     from modules.siabumdes.inventory.application.services import InventoryService
     from modules.siabumdes.inventory.infrastructure.models import (
+        DocNumber,
+        ReceiptCounter,
         Customer,
         Purchase,
         PurchasePayment,
@@ -121,6 +123,8 @@ async def test_concurrent_stock_out_cannot_oversell():
         StockCategory.__table__,
         Product.__table__,
         StockCard.__table__,
+        DocNumber.__table__,
+        ReceiptCounter.__table__,
         Vendor.__table__,
         Purchase.__table__,
         PurchasePayment.__table__,

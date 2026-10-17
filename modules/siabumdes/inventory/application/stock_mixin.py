@@ -14,6 +14,7 @@ from modules.siabumdes.inventory.application.descriptions import (
     nota_products,
 )
 from modules.siabumdes.inventory.application.coa import validate_coa_codes
+from modules.siabumdes.inventory.application.receipt_number import assign_receipt_number
 from modules.siabumdes.inventory.infrastructure.models import (
     CommercialDocument,
     DocumentSource,
@@ -216,6 +217,8 @@ class InventoryStockMixin:
         )
         self.session.add(purchase)
         await self.session.flush()
+        await assign_receipt_number(self.session, head, kind="po" if vendor_id else "ma",
+                                    unit_id=unit_usaha_id, partner_id=vendor_id)
         return [c for c, _ in cards]
 
     async def stock_out(
@@ -343,6 +346,7 @@ class InventoryStockMixin:
         )
         self.session.add(sale)
         await self.session.flush()
+        await assign_receipt_number(self.session, head, kind="invoice", unit_id=unit_usaha_id, partner_id=customer_id)
         return [c for c, _ in cards]
 
     async def stock_out_internal(
@@ -402,6 +406,7 @@ class InventoryStockMixin:
         )
         card.finance_status = "posted"
         await self.session.flush()
+        await assign_receipt_number(self.session, card, kind="int", unit_id=unit_usaha_id, partner_id=None)
         return card
 
     async def nota_cards(self, card: StockCard) -> list[StockCard]:
@@ -512,6 +517,9 @@ class InventoryStockMixin:
             .union_all(select(Sale.stock_card_id, Sale.invoice_number, Sale.payment_method).where(Sale.stock_card_id.in_(heads)))
         )).all()} if heads else {}
         sale_values = await self._sale_line_values(rows)
+        head_numbers = dict((await self.session.execute(
+            select(StockCard.id, StockCard.doc_number).where(StockCard.id.in_(heads))
+        )).all()) if heads else {}
         return [
             {
                 "id": c.id,
@@ -528,6 +536,7 @@ class InventoryStockMixin:
                 "finance_status": c.finance_status,
                 "nota_id": c.nota_id or c.id,
                 "invoice_number": (docs.get(c.nota_id or c.id) or ("", ""))[0] or "",
+                "doc_number": head_numbers.get(c.nota_id or c.id) or "",
                 "payment_method": (docs.get(c.nota_id or c.id) or ("", ""))[1] or "",
                 "sale_value": str(sale_values[c.id]) if c.id in sale_values else None,
             }

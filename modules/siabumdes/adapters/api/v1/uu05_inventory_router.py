@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -97,6 +97,7 @@ def card_out(card) -> dict:
     return {
         "id": card.id,
         "nota_id": card.nota_id or card.id,
+        "doc_number": card.doc_number or "",
         "reference": card.reference,
         "finance_status": card.finance_status,
         "quantity": card.quantity,
@@ -578,6 +579,36 @@ async def stock_out(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return card_out(card)
+
+
+@router.get("/doc-number-preview")
+async def doc_number_preview(
+    kind: Literal["po", "invoice", "ma", "int"],
+    movement_date: date,
+    partner_id: Optional[str] = None,
+    unit_usaha_id: Optional[str] = None,
+    user: User = Depends(require_inventory_user),
+    session: AsyncSession = Depends(get_db),
+):
+    """Perkiraan No. Nota berikutnya (tidak memesan nomor; nomor final diberikan saat simpan)."""
+    from modules.siabumdes.inventory.application.receipt_number import preview_receipt_number
+
+    if public_role(user.role) == "pengelola" and user.unit_usaha_id:
+        uid = user.unit_usaha_id
+    elif unit_usaha_id:
+        uid = unit_usaha_id
+    else:
+        unit = await session.scalar(
+            select(UnitUsaha).where(UnitUsaha.business_type.in_(INVENTORY_BUSINESS_TYPES)).order_by(UnitUsaha.code.asc())
+        )
+        if not unit:
+            raise HTTPException(status_code=422, detail="Belum ada unit usaha berjenis Perdagangan/Manufaktur")
+        uid = unit.id
+    try:
+        number = await preview_receipt_number(session, kind=kind, unit_id=uid, partner_id=partner_id, d=movement_date)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"doc_number": number, "estimated": True}
 
 
 @router.post("/cancel-movement")

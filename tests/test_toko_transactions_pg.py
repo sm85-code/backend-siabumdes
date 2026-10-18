@@ -154,3 +154,15 @@ async def test_kasbon_entries_post_to_piutang_lainnya(toko_context):
     assert await session.scalar(select(func.count(JournalEntry.id)).where(JournalEntry.transaction_id == tx.id)) == 1
     assert await session.get(TokoEntry, entry.id) is not None
     assert await repost_kasbon_entries(session) == 0
+
+
+@pytest.mark.asyncio
+async def test_move_item_reorders_within_jenis(toko_context):
+    session, admin, manager, _, unit, *_ = toko_context
+    await _setup(session, unit)
+    s = _NoCommit(session)
+    a, b, c = [await tr.create_item(tr.ItemCreateBody(name=n, jenis='pemasukan', position=0), manager, s) for n in 'ABC']
+    out = await tr.move_item(c['id'], tr.ItemMoveBody(direction='up'), manager, s)
+    assert [r['name'] for r in out] == ['A', 'C', 'B'] and [r['position'] for r in out] == [1, 2, 3]
+    out = await tr.move_item(a['id'], tr.ItemMoveBody(direction='up'), manager, s)  # sudah paling atas
+    assert [r['name'] for r in out] == ['A', 'C', 'B']

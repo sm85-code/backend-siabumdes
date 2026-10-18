@@ -121,7 +121,7 @@ async def list_items(
     _: User = Depends(require_toko_user),
     session: AsyncSession = Depends(get_db),
 ):
-    rows = list((await session.execute(select(TokoItem).order_by(TokoItem.position, TokoItem.created_at))).scalars())
+    rows = list((await session.execute(select(TokoItem).order_by(TokoItem.position, TokoItem.created_at, TokoItem.id))).scalars())
     used = set((await session.execute(select(TokoEntry.item_id).distinct())).scalars()) if rows else set()
     return [item_out(r, r.id in used) for r in rows]
 
@@ -188,6 +188,33 @@ async def update_item(
     await session.flush()
     has = bool(await session.scalar(select(func.count(TokoEntry.id)).where(TokoEntry.item_id == item.id)))
     return item_out(item, has)
+
+
+class ItemMoveBody(BaseModel):
+    direction: Literal["up", "down"]
+
+
+@router.post("/items/{item_id}/move")
+async def move_item(
+    item_id: str,
+    body: ItemMoveBody,
+    _: User = Depends(require_toko_writer),
+    session: AsyncSession = Depends(get_db),
+):
+    """Naik/turunkan satu baris dalam tabel jenisnya; urutan jenis itu dinomori ulang 1..n (posisi kembar ikut rapi)."""
+    item = await session.get(TokoItem, item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Data transaksi tidak ditemukan")
+    rows = list((await session.execute(select(TokoItem).where(TokoItem.jenis == item.jenis)
+                                       .order_by(TokoItem.position, TokoItem.created_at, TokoItem.id))).scalars())
+    i = next(k for k, r in enumerate(rows) if r.id == item.id)
+    j = i - 1 if body.direction == "up" else i + 1
+    if 0 <= j < len(rows):
+        rows[i], rows[j] = rows[j], rows[i]
+    for n, r in enumerate(rows, start=1):
+        r.position = n
+    await session.flush()
+    return [item_out(r) for r in rows]
 
 
 @router.delete("/items/{item_id}")

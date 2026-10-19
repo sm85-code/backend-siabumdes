@@ -75,6 +75,18 @@ _POST_DDL = [
     # Nomor nota otomatis Stock In/Out: unik per unit.
     ("CREATE UNIQUE INDEX IF NOT EXISTS uq_stock_cards_doc_number ON stock_cards (doc_unit_id, doc_number) "
      "WHERE doc_number IS NOT NULL", "unique stock_cards.doc_number per unit"),
+    # Proporsi bagi hasil per unit: unit tanpa riwayat diberi satu baris = default Profil BUMDes
+    # (dulu satu-satunya proporsi), berlaku sejak bulan transaksi pertama unit tsb.
+    ("""INSERT INTO unit_bagi_hasil_shares (id, unit_usaha_id, effective_from, share_pengelola, share_bumdes, created_by, created_at)
+        SELECT md5(random()::text || u.id), u.id,
+               COALESCE((SELECT date_trunc('month', min(t.date))::date FROM transactions t WHERE t.unit_usaha_id = u.id),
+                        date_trunc('month', current_date)::date),
+               COALESCE((SELECT share_unit_pengelola FROM org_profiles ORDER BY id LIMIT 1), 30),
+               COALESCE((SELECT share_unit_bumdes FROM org_profiles ORDER BY id LIMIT 1), 70),
+               'backfill', now()
+        FROM unit_usaha u
+        WHERE NOT EXISTS (SELECT 1 FROM unit_bagi_hasil_shares s WHERE s.unit_usaha_id = u.id)""",
+     "backfill unit_bagi_hasil_shares"),
 ]
 
 

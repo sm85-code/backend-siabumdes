@@ -23,7 +23,7 @@ from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from modules.siabumdes.application.automatic_descriptions import automatic_description
-from modules.siabumdes.application.bagi_hasil import BagiHasilConfig, get_bagi_hasil_config
+from modules.siabumdes.application.bagi_hasil import BagiHasilConfig, UnitShare, effective_unit_share, get_bagi_hasil_config
 from modules.siabumdes.application.closing import (
     SUB_UTANG_BH_BUMDES,
     SUB_UTANG_BH_UNIT,
@@ -34,6 +34,7 @@ from modules.siabumdes.identity.infrastructure.models import ClosedPeriod
 from modules.siabumdes.infrastructure.models import (
     Account,
     JournalEntry,
+    BagiHasilTransferShare,
     JournalItem,
     Transaction,
     UnitUsaha,
@@ -96,8 +97,9 @@ def bumdes_shares(cfg: BagiHasilConfig) -> list[tuple[str, Decimal]]:
     ]
 
 
-def unit_shares(cfg: BagiHasilConfig) -> list[tuple[str, Decimal]]:
-    return [("BUMDES", cfg.unit_bumdes), ("Pengelola", cfg.unit_pengelola)]
+def unit_shares(share: UnitShare) -> list[tuple[str, Decimal]]:
+    """Proporsi unit per unit & per periode (lihat bagi_hasil.effective_unit_share)."""
+    return [("BUMDES", share.bumdes), ("Pengelola", share.pengelola)]
 
 
 def _slug(label: str) -> str:
@@ -255,7 +257,14 @@ async def run_bagi_hasil_transfer(
     if saldo <= 0:
         raise ValueError(f"Saldo {utang.code} ({group_code}) sampai {end.isoformat()} nol, tidak ada yang ditransfer")
 
-    parts = split_amount(saldo, bumdes_shares(cfg) if group_code == "BUMDES" else unit_shares(cfg))
+    if group_code == "BUMDES":
+        parts = split_amount(saldo, bumdes_shares(cfg))
+    else:
+        # Proporsi yang berlaku untuk unit pada periode transfer (bukan nilai hari ini), disimpan sebagai snapshot.
+        share = await effective_unit_share(session, unit.id, period)
+        parts = split_amount(saldo, unit_shares(share))
+        session.add(BagiHasilTransferShare(reference=ref, unit_usaha_id=unit.id, period=period,
+                                           share_pengelola=share.pengelola, share_bumdes=share.bumdes))
 
     items: list[dict[str, str]] = []
     for label, amount in parts:
@@ -308,6 +317,9 @@ async def transfer_transactions(session: AsyncSession, period: str, group: str) 
 
 async def undo_bagi_hasil_transfer(session: AsyncSession, txs: list[Transaction]) -> int:
     tx_ids = [tx.id for tx in txs]
+    refs = {tx.reference for tx in txs if tx.reference}
+    if refs:
+        await session.execute(delete(BagiHasilTransferShare).where(BagiHasilTransferShare.reference.in_(refs)))
     if tx_ids:
         entry_ids = list(
             (await session.execute(select(JournalEntry.id).where(JournalEntry.transaction_id.in_(tx_ids)))).scalars()

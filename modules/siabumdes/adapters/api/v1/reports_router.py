@@ -161,7 +161,12 @@ async def laba_rugi(
     session: AsyncSession = Depends(get_db),
 ):
     start, end = _need_dates(start_date, end_date)
-    data = await ReportingService(session).laba_rugi(start, end, await _scope(session, user, unit_usaha_id))
+    svc = ReportingService(session)
+    uid = await _scope(session, user, unit_usaha_id)
+    data = await svc.laba_rugi(start, end, uid)
+    if uid:
+        # Alokasi bagi hasil unit: proporsi per unit per bulan (lihat ReportingService.unit_bagi_hasil).
+        data["bagi_hasil_unit"] = await svc.unit_bagi_hasil(uid, start, end, data["laba_bersih"])
     return stringify_money_fields(data)
 
 

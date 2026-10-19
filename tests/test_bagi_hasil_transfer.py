@@ -35,7 +35,9 @@ from modules.siabumdes.infrastructure.models import (  # noqa: E402
     Account,
     JournalEntry,
     JournalItem,
+    BagiHasilTransferShare,
     Transaction,
+    UnitBagiHasilShare,
     UnitUsaha,
 )
 from shared.database import Base, DATABASE_URL as ASYNC_DATABASE_URL  # noqa: E402
@@ -43,7 +45,7 @@ from shared.database import Base, DATABASE_URL as ASYNC_DATABASE_URL  # noqa: E4
 _TABLES = [
     Account.__table__, Transaction.__table__, JournalEntry.__table__, JournalItem.__table__,
     UnitUsaha.__table__, ClosedPeriod.__table__, SystemControl.__table__, User.__table__,
-    OrgProfile.__table__,
+    OrgProfile.__table__, UnitBagiHasilShare.__table__, BagiHasilTransferShare.__table__,
 ]
 
 
@@ -241,3 +243,42 @@ async def test_bumdes_close_requires_units_with_saldo_to_transfer_first(session)
     # unit tanpa saldo tidak menghalangi tutup buku.
     res2 = await run_monthly_close(session, period="2026-02", group="BUMDES", actor_id="a")
     assert res2["closed"] is True
+
+
+@pytest.mark.asyncio
+async def test_unit_share_per_period_transfer_snapshot_and_guard(session):
+    from fastapi import HTTPException
+
+    from modules.siabumdes.adapters.api.v1.master_data_router import _assert_share_month_open
+    from modules.siabumdes.application.bagi_hasil import effective_unit_share, unit_shares_by_month
+
+    unit = await _seed(session)
+    session.add_all([
+        UnitBagiHasilShare(unit_usaha_id=unit.id, effective_from=date(2026, 1, 1), share_pengelola=30, share_bumdes=70),
+        UnitBagiHasilShare(unit_usaha_id=unit.id, effective_from=date(2026, 12, 1), share_pengelola=40, share_bumdes=60),
+    ])
+    await session.flush()
+    # Lookup per bulan + fallback default Profil BUMDes sebelum riwayat pertama.
+    assert (await effective_unit_share(session, unit.id, "2026-11")).pengelola == 30
+    assert (await effective_unit_share(session, unit.id, "2026-12")).pengelola == 40
+    assert (await effective_unit_share(session, unit.id, "2025-12")).source == "default"
+
+    # Transfer November memakai proporsi November (30/70), bukan yang terbaru (40/60).
+    _close(session, "2026-11", "UU01")
+    await _credit_utang(session, when=date(2026, 11, 30), amount="1000", code="2.1.03.11", ikhtisar="3.9.01.11", unit_id=unit.id)
+    await run_bagi_hasil_transfer(session, period="2026-11", group="UU01", actor_id="a")
+    amounts = {t.transaction_type: t.amount for t in await transfer_transactions(session, "2026-11", "UU01") if t.unit_usaha_id}
+    assert amounts == {"bagi_hasil_bumdes": Decimal("700.00"), "bagi_hasil_pengelola": Decimal("300.00")}
+
+    # Bulan tutup buku / sudah ditransfer tidak bisa diubah proporsinya.
+    with pytest.raises(HTTPException) as exc:
+        await _assert_share_month_open(session, unit, "2026-11")
+    assert exc.value.status_code == 409
+    await _assert_share_month_open(session, unit, "2026-12")
+
+    # Laporan periode lalu tetap: walau riwayat November diubah langsung, snapshot transfer yang dipakai.
+    session.add(UnitBagiHasilShare(unit_usaha_id=unit.id, effective_from=date(2026, 11, 1), share_pengelola=50, share_bumdes=50))
+    await session.flush()
+    shares = await unit_shares_by_month(session, unit.id, ["2026-11", "2026-12"])
+    assert (shares["2026-11"].pengelola, shares["2026-11"].source) == (30, "transfer")
+    assert shares["2026-12"].pengelola == 40

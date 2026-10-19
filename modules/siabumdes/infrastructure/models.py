@@ -227,3 +227,31 @@ class YieldPayment(Base):
     transaction_id: Mapped[Optional[str]] = mapped_column(String(64), ForeignKey("transactions.id", ondelete="RESTRICT"), nullable=True)
     transaction_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     automatic: Mapped[bool] = mapped_column(Boolean, nullable=False)
+
+
+class UnitBagiHasilShare(Base):
+    """Proporsi bagi hasil unit (Pengelola/BUMDes, persen 0-100) berlaku mulai tanggal 1 bulan `effective_from`."""
+
+    __tablename__ = "unit_bagi_hasil_shares"
+    __table_args__ = (UniqueConstraint("unit_usaha_id", "effective_from", name="uq_unit_bh_share_unit_from"),)
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=_uuid)
+    unit_usaha_id: Mapped[str] = mapped_column(String(64), ForeignKey("unit_usaha.id", ondelete="CASCADE"), nullable=False, index=True)
+    effective_from: Mapped[date] = mapped_column(Date, nullable=False)
+    share_pengelola: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False)
+    share_bumdes: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False)
+    created_by: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class BagiHasilTransferShare(Base):
+    """Proporsi yang benar-benar dipakai satu Transfer Bagi Hasil unit (snapshot, per referensi transfer)."""
+
+    __tablename__ = "bagi_hasil_transfer_shares"
+
+    reference: Mapped[str] = mapped_column(String(128), primary_key=True)
+    unit_usaha_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    period: Mapped[str] = mapped_column(String(7), nullable=False)
+    share_pengelola: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False)
+    share_bumdes: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

@@ -8,7 +8,7 @@ os.environ.setdefault('DATABASE_URL', 'postgresql://user:pass@127.0.0.1:5432/sia
 
 import pytest  # noqa: E402
 from modules.siabumdes.application import reporting  # noqa: E402
-from modules.siabumdes.application.bagi_hasil import BagiHasilConfig  # noqa: E402
+from modules.siabumdes.application.bagi_hasil import BagiHasilConfig, UnitShare  # noqa: E402
 from modules.siabumdes.money_json import stringify_money_fields  # noqa: E402
 
 
@@ -68,7 +68,11 @@ async def test_unit_dashboard_does_not_expose_bumdes_shares(monkeypatch):
     async def config(session):
         return BagiHasilConfig(*map(Decimal, (35, 7, 5, 5, 30, 18, 25, 75)))
 
+    async def unit_shares(session, unit_id, periods):
+        return {p: UnitShare(Decimal(25), Decimal(75)) for p in periods}
+
     monkeypatch.setattr(reporting, 'get_bagi_hasil_config', config)
+    monkeypatch.setattr(reporting, 'unit_shares_by_month', unit_shares)
     result = await ReportFixture(None).dashboard(date(2026, 1, 1), date(2026, 12, 31), 'month', 'unit1', False)
     assert result['bagi_hasil_bumdes'] == []
     assert result['modal_desa'] == 0
@@ -90,7 +94,11 @@ async def test_unit_tables_use_as_of_balances_and_configured_shares(monkeypatch)
     async def config(session):
         return BagiHasilConfig(*map(Decimal, (35, 7, 5, 5, 30, 18, 25, 75)))
 
+    async def unit_shares(session, unit_id, periods):
+        return {p: UnitShare(Decimal(25), Decimal(75)) for p in periods}
+
     monkeypatch.setattr(reporting, 'get_bagi_hasil_config', config)
+    monkeypatch.setattr(reporting, 'unit_shares_by_month', unit_shares)
     result = await UnitsFixture(None).dashboard(date(2026, 1, 1), date(2026, 12, 31), 'month', None, True)
     row = stringify_money_fields(result)['unit_summaries'][0]
     assert row['active'] is False

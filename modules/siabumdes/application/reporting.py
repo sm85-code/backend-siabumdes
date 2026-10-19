@@ -9,7 +9,7 @@ from typing import Any, Optional
 from sqlalchemy import not_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from modules.siabumdes.application.bagi_hasil import get_bagi_hasil_config
+from modules.siabumdes.application.bagi_hasil import get_bagi_hasil_config, months_between, unit_shares_by_month
 from modules.siabumdes.infrastructure.models import Account, Transaction, UnitUsaha
 from modules.siabumdes.coa_taxonomy import SUB_BAGI_HASIL_DESA, SUB_LABA_DICADANGKAN, SUB_MODAL_DESA
 from modules.siabumdes.period import seed_period_buckets
@@ -39,6 +39,32 @@ def _is_masyarakat_modal(acc: Account) -> bool:
 class ReportingService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
+
+    async def unit_bagi_hasil(self, unit_id: str, start: Optional[date], end: Optional[date],
+                              laba_total: float) -> dict[str, Any]:
+        """Bagian Pengelola/BUMDes dari laba unit, memakai proporsi per bulan (snapshot transfer bila ada,
+        selain itu riwayat unit, fallback default Profil BUMDes) dan dijumlah per bulan.
+        Persen yang dilaporkan = proporsi bulan terakhir rentang."""
+        last = end or date.today()
+        months = months_between(start, last) if start else [f"{last.year}-{last.month:02d}"]
+        shares = await unit_shares_by_month(self.session, unit_id, months)
+        cur = shares[months[-1]]
+        distinct = {(s.pengelola, s.bumdes) for s in shares.values()}
+        if len(distinct) <= 1 or not start:
+            peng = round(laba_total * float(cur.pengelola) / 100)
+            bum = round(laba_total * float(cur.bumdes) / 100)
+        else:
+            peng = bum = 0
+            for p in months:
+                y, m = int(p[:4]), int(p[5:7])
+                ms = max(start, date(y, m, 1))
+                me = min(last, date(y + (m == 12), m % 12 + 1, 1) - timedelta(days=1))
+                laba = (await self.laba_rugi(ms, me, unit_id))["laba_bersih"]
+                peng += round(laba * float(shares[p].pengelola) / 100)
+                bum += round(laba * float(shares[p].bumdes) / 100)
+        return {"share_pengelola": peng, "share_bumdes": bum,
+                "persen_pengelola": float(cur.pengelola), "persen_bumdes": float(cur.bumdes),
+                "proporsi_bervariasi": len(distinct) > 1}
 
     async def _units(self) -> list[UnitUsaha]:
         return list((await self.session.execute(select(UnitUsaha).order_by(UnitUsaha.code))).scalars())
@@ -472,8 +498,10 @@ class ReportingService:
                 "pendapatan": lr["total_pendapatan"],
                 "beban": lr["total_beban"],
                 "laba_bersih": lr["laba_bersih"],
-                "share_pengelola_30": round(lr["laba_bersih"] * float(bh.unit_pengelola) / 100),
-                "share_bumdes_70": round(lr["laba_bersih"] * float(bh.unit_bumdes) / 100),
+                **(bhu := await self.unit_bagi_hasil(unit.id, start, end, lr["laba_bersih"])),
+                # Nama lama dipertahankan demi kompatibilitas; nilai = proporsi per unit per bulan.
+                "share_pengelola_30": bhu["share_pengelola"],
+                "share_bumdes_70": bhu["share_bumdes"],
             })
         return {"bumdes": bumdes, "units": units}
 
@@ -533,8 +561,7 @@ class ReportingService:
                 "total_kewajiban": u_nr["total_kewajiban"],
                 "total_ekuitas": u_nr["total_ekuitas"],
                 "modal_bumdes": u_nr["modal_desa"],
-                "share_pengelola": round(u_lr["laba_bersih"] * float(bh.unit_pengelola) / 100),
-                "share_bumdes": round(u_lr["laba_bersih"] * float(bh.unit_bumdes) / 100),
+                **(await self.unit_bagi_hasil(unit.id, start, end, u_lr["laba_bersih"])),
             })
 
         # Posisi keuangan (Neraca) per akhir periode -- dasar KPI rasio
@@ -558,6 +585,7 @@ class ReportingService:
                     "amount": round(lr["laba_bersih"] * float(percentage) / 100),
                 })
 
+        own = await self.unit_bagi_hasil(unit_usaha_id, start, end, lr["laba_bersih"]) if unit_usaha_id else None
         return {
             "total_pendapatan": lr["total_pendapatan"],
             "total_beban": lr["total_beban"],
@@ -571,13 +599,12 @@ class ReportingService:
             "kas_bank": nr["kas_bank"],
             "modal_desa": nr["modal_desa"],
             "bagi_hasil_bumdes": bagi_hasil_bumdes,
-            "unit_share_persen": {"pengelola": float(bh.unit_pengelola), "bumdes": float(bh.unit_bumdes)},
+            # Unit terpilih: persen bulan terakhir unit itu; tanpa unit: default Profil BUMDes (tiap unit bisa beda,
+            # lihat persen_pengelola/persen_bumdes per baris unit_summaries).
+            "unit_share_persen": ({"pengelola": own["persen_pengelola"], "bumdes": own["persen_bumdes"]} if own
+                                  else {"pengelola": float(bh.unit_pengelola), "bumdes": float(bh.unit_bumdes)}),
             "bagi_hasil_unit": [
-                {"key": key, "label": label, "persen": float(pct),
-                 "amount": round(lr["laba_bersih"] * float(pct) / 100)}
-                for key, label, pct in (
-                    ("pengelola", "Pengelola", bh.unit_pengelola),
-                    ("bumdes", "BUMDes", bh.unit_bumdes),
-                )
-            ] if unit_usaha_id else [],
+                {"key": "pengelola", "label": "Pengelola", "persen": own["persen_pengelola"], "amount": own["share_pengelola"]},
+                {"key": "bumdes", "label": "BUMDes", "persen": own["persen_bumdes"], "amount": own["share_bumdes"]},
+            ] if own else [],
         }

@@ -15,10 +15,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
+from datetime import date
+
 from fastapi import HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from modules.siabumdes.identity.application.services import get_org_profile
+from modules.siabumdes.infrastructure.models import BagiHasilTransferShare, UnitBagiHasilShare
 
 SHARE_FIELDS_BUMDES = (
     "share_pengurus",
@@ -126,3 +130,68 @@ def validate_bagi_hasil_fields(fields: dict) -> None:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Total proporsi bagi hasil Unit Usaha (Pengelola + BUMDes) harus 100%, saat ini {total}%",
             )
+
+
+# ---------------------------------------------------------------------------
+# Proporsi bagi hasil per unit usaha, berlaku per bulan (riwayat effective_from).
+# Default (unit tanpa riwayat / bulan sebelum riwayat pertama) = pasangan
+# share_unit_* di Profil BUMDes ("default untuk unit baru").
+
+
+@dataclass(frozen=True)
+class UnitShare:
+    pengelola: Decimal
+    bumdes: Decimal
+    source: str = "default"  # default | riwayat | transfer
+
+
+def month_start(period: str) -> date:
+    return date(int(period[:4]), int(period[5:7]), 1)
+
+
+def months_between(start: date, end: date) -> list[str]:
+    out, y, m = [], start.year, start.month
+    while (y, m) <= (end.year, end.month):
+        out.append(f"{y}-{m:02d}")
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    return out
+
+
+async def default_unit_share(session: AsyncSession) -> UnitShare:
+    row = await get_org_profile(session)
+    return UnitShare(Decimal(row.share_unit_pengelola), Decimal(row.share_unit_bumdes))
+
+
+async def unit_share_history(session: AsyncSession, unit_id: str) -> list[UnitBagiHasilShare]:
+    return list((await session.execute(
+        select(UnitBagiHasilShare).where(UnitBagiHasilShare.unit_usaha_id == unit_id)
+        .order_by(UnitBagiHasilShare.effective_from))).scalars())
+
+
+def _pick(history: list[UnitBagiHasilShare], period: str, default: UnitShare) -> UnitShare:
+    first = month_start(period)
+    hit = None
+    for h in history:
+        if h.effective_from <= first:
+            hit = h
+    return UnitShare(Decimal(hit.share_pengelola), Decimal(hit.share_bumdes), "riwayat") if hit else default
+
+
+async def effective_unit_share(session: AsyncSession, unit_id: str, period: str) -> UnitShare:
+    """Proporsi yang berlaku untuk unit pada bulan `period` (YYYY-MM) menurut riwayat."""
+    return _pick(await unit_share_history(session, unit_id), period, await default_unit_share(session))
+
+
+async def unit_shares_by_month(session: AsyncSession, unit_id: str, periods: list[str]) -> dict[str, UnitShare]:
+    """Proporsi per bulan untuk laporan: snapshot transfer (yang sungguh dipakai) bila ada, selain itu riwayat."""
+    history = await unit_share_history(session, unit_id)
+    default = await default_unit_share(session)
+    snaps = {r.period: r for r in (await session.execute(
+        select(BagiHasilTransferShare).where(BagiHasilTransferShare.unit_usaha_id == unit_id,
+                                             BagiHasilTransferShare.period.in_(periods)))).scalars()} if periods else {}
+    out = {}
+    for p in periods:
+        snap = snaps.get(p)
+        out[p] = UnitShare(Decimal(snap.share_pengelola), Decimal(snap.share_bumdes), "transfer") if snap \
+            else _pick(history, p, default)
+    return out

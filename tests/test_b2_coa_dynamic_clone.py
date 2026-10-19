@@ -227,6 +227,7 @@ async def test_import_accounts_accepts_dynamic_unit_sheet(monkeypatch):
     monkeypatch.setattr(mdr, "coa_group_codes", fake_groups)
     monkeypatch.setattr(mdr, "_validate_category_pair", lambda *a, **k: None)
     monkeypatch.setattr(mdr, "record_audit", AsyncMock())
+    monkeypatch.setattr(mdr, "default_unit_share", AsyncMock(return_value=SimpleNamespace(pengelola=30, bumdes=70)))
 
     # execute: unit lookup for UU99, then exists check for account
     session.execute = AsyncMock(
@@ -270,6 +271,7 @@ async def test_import_accounts_skips_unknown_sheet_not_in_db(monkeypatch):
     session.add = MagicMock()
     monkeypatch.setattr(mdr, "coa_group_codes", AsyncMock(return_value={"BUMDES", "UU01"}))
     monkeypatch.setattr(mdr, "record_audit", AsyncMock())
+    monkeypatch.setattr(mdr, "default_unit_share", AsyncMock(return_value=SimpleNamespace(pengelola=30, bumdes=70)))
 
     file = MagicMock()
     file.read = AsyncMock(return_value=buf.getvalue())
@@ -300,6 +302,7 @@ async def test_create_unit_clones_coa_by_default(monkeypatch):
         AsyncMock(return_value={"source_unit": "UU01", "accounts_cloned": 14, "transaction_types_cloned": 3}),
     )
     monkeypatch.setattr(mdr, "record_audit", AsyncMock())
+    monkeypatch.setattr(mdr, "default_unit_share", AsyncMock(return_value=SimpleNamespace(pengelola=30, bumdes=70)))
 
     payload = mdr.UnitIn(code="uu10", name="Unit Baru", business_type="jasa")
     request = MagicMock()
@@ -324,6 +327,7 @@ async def test_create_unit_clone_coa_false_skips(monkeypatch):
     find = AsyncMock()
     monkeypatch.setattr(mdr, "find_coa_template_unit", find)
     monkeypatch.setattr(mdr, "record_audit", AsyncMock())
+    monkeypatch.setattr(mdr, "default_unit_share", AsyncMock(return_value=SimpleNamespace(pengelola=30, bumdes=70)))
 
     payload = mdr.UnitIn(code="UU11", name="Empty", business_type="jasa", clone_coa=False)
     request = MagicMock()

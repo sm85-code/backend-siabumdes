@@ -1,6 +1,8 @@
 """Master data HTTP API matching frontend-siabumdes paths."""
 from __future__ import annotations
 
+from datetime import date
+from decimal import Decimal
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
@@ -26,7 +28,9 @@ from modules.siabumdes.application.coa_template import (
 from modules.siabumdes.coa_taxonomy import categories_map, valid_pair
 from modules.siabumdes.identity.application.services import record_audit
 from modules.siabumdes.identity.infrastructure.models import User
-from modules.siabumdes.infrastructure.models import Account, Mitra, TransactionType, UnitUsaha
+from modules.siabumdes.infrastructure.models import Account, Mitra, Transaction, TransactionType, UnitBagiHasilShare, UnitUsaha
+from modules.siabumdes.application.bagi_hasil import default_unit_share, effective_unit_share, month_start, unit_share_history
+from modules.siabumdes.identity.infrastructure.models import ClosedPeriod
 from shared.database import get_db
 
 router = APIRouter(prefix="/api", tags=["master-data"])
@@ -196,6 +200,12 @@ async def create_unit(
     )
     session.add(row)
     await session.flush()
+    # Unit baru: proporsi bagi hasil awal = default Profil BUMDes, berlaku mulai bulan ini.
+    default = await default_unit_share(session)
+    today = date.today()
+    session.add(UnitBagiHasilShare(unit_usaha_id=row.id, effective_from=date(today.year, today.month, 1),
+                                   share_pengelola=default.pengelola, share_bumdes=default.bumdes, created_by=getattr(actor, "username", "")))
+    await session.flush()
 
     clone_info: dict = {"cloned": False}
     if payload.clone_coa:
@@ -274,6 +284,99 @@ async def update_unit(
         "revenue_scheme": row.revenue_scheme,
         "active": row.active,
     }
+
+
+def _share_out(r: UnitBagiHasilShare) -> dict:
+    return {"id": r.id, "effective_from": r.effective_from.isoformat()[:7], "share_pengelola": float(r.share_pengelola),
+            "share_bumdes": float(r.share_bumdes), "created_by": r.created_by,
+            "created_at": r.created_at.isoformat() if r.created_at else None}
+
+
+class UnitShareIn(BaseModel):
+    effective_from: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    share_pengelola: Decimal = Field(ge=0, le=100)
+    share_bumdes: Decimal = Field(ge=0, le=100)
+
+
+async def _assert_share_month_open(session: AsyncSession, unit: UnitUsaha, period: str) -> None:
+    """Proporsi hanya boleh berubah mulai bulan yang belum tutup buku dan belum ditransfer untuk unit ini."""
+    closed = (await session.execute(select(ClosedPeriod.period).where(
+        ClosedPeriod.group_code == unit.code, ClosedPeriod.period >= period).order_by(ClosedPeriod.period))).scalars().first()
+    if closed:
+        raise HTTPException(status_code=409, detail=f"Periode {closed} ({unit.code}) sudah tutup buku; proporsi hanya bisa diubah mulai bulan sesudahnya")
+    refs = (await session.execute(select(Transaction.reference).where(
+        Transaction.reference.like(f"BAGIHASIL-%-{unit.code}")).distinct())).scalars().all()
+    done = sorted(r[10:17] for r in refs if r and r[10:17] >= period)
+    if done:
+        raise HTTPException(status_code=409, detail=f"Transfer bagi hasil {done[0]} ({unit.code}) sudah dilakukan; proporsi hanya bisa diubah mulai bulan sesudahnya")
+
+
+@router.get("/unit-usaha/{unit_id}/bagi-hasil-shares")
+async def list_unit_shares(
+    unit_id: str,
+    period: Optional[str] = Query(None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$"),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+):
+    unit = await session.get(UnitUsaha, unit_id)
+    if not unit or (is_pengelola(user) and user.unit_usaha_id != unit_id):
+        raise HTTPException(status_code=404, detail="Unit usaha tidak ditemukan")
+    today = date.today()
+    p = period or f"{today.year}-{today.month:02d}"
+    eff = await effective_unit_share(session, unit_id, p)
+    default = await default_unit_share(session)
+    return {"period": p, "effective": {"share_pengelola": float(eff.pengelola), "share_bumdes": float(eff.bumdes), "source": eff.source},
+            "default": {"share_pengelola": float(default.pengelola), "share_bumdes": float(default.bumdes)},
+            "history": [_share_out(r) for r in await unit_share_history(session, unit_id)]}
+
+
+@router.post("/unit-usaha/{unit_id}/bagi-hasil-shares")
+async def set_unit_share(
+    unit_id: str,
+    payload: UnitShareIn,
+    request: Request,
+    actor: User = Depends(require_roles("admin")),
+    session: AsyncSession = Depends(get_db),
+):
+    unit = await session.get(UnitUsaha, unit_id)
+    if not unit:
+        raise HTTPException(status_code=404, detail="Unit usaha tidak ditemukan")
+    if abs(payload.share_pengelola + payload.share_bumdes - Decimal("100")) > Decimal("0.01"):
+        raise HTTPException(status_code=422, detail="Proporsi Pengelola + BUMDes harus 100%")
+    await _assert_share_month_open(session, unit, payload.effective_from)
+    eff = month_start(payload.effective_from)
+    row = (await session.execute(select(UnitBagiHasilShare).where(
+        UnitBagiHasilShare.unit_usaha_id == unit_id, UnitBagiHasilShare.effective_from == eff))).scalar_one_or_none()
+    if row is None:
+        row = UnitBagiHasilShare(unit_usaha_id=unit_id, effective_from=eff, share_pengelola=Decimal("0"), share_bumdes=Decimal("0"))
+        session.add(row)
+    row.share_pengelola, row.share_bumdes, row.created_by = payload.share_pengelola, payload.share_bumdes, actor.username
+    await session.flush()
+    await record_audit(session, actor=actor, action="set_unit_bagi_hasil", entity="unit_usaha", entity_id=unit_id,
+                       detail=f"Proporsi bagi hasil {unit.code} mulai {payload.effective_from}: Pengelola {payload.share_pengelola}% / BUMDes {payload.share_bumdes}%",
+                       ip=_client_ip(request))
+    return _share_out(row)
+
+
+@router.delete("/unit-usaha/{unit_id}/bagi-hasil-shares/{share_id}")
+async def delete_unit_share(
+    unit_id: str,
+    share_id: str,
+    request: Request,
+    actor: User = Depends(require_roles("admin")),
+    session: AsyncSession = Depends(get_db),
+):
+    unit = await session.get(UnitUsaha, unit_id)
+    row = await session.get(UnitBagiHasilShare, share_id)
+    if not unit or not row or row.unit_usaha_id != unit_id:
+        raise HTTPException(status_code=404, detail="Proporsi tidak ditemukan")
+    period = row.effective_from.isoformat()[:7]
+    await _assert_share_month_open(session, unit, period)
+    await session.delete(row)
+    await session.flush()
+    await record_audit(session, actor=actor, action="delete_unit_bagi_hasil", entity="unit_usaha", entity_id=unit_id,
+                       detail=f"Hapus proporsi bagi hasil {unit.code} mulai {period}", ip=_client_ip(request))
+    return {"deleted": True}
 
 
 @router.get("/accounts")

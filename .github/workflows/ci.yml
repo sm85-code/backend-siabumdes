@@ -67,3 +67,26 @@ jobs:
           POSTGRES_SSL: "false"
           RISKA_TEST_DATABASE_URL: postgresql+asyncpg://siabumdes:siabumdes@localhost:5432/siabumdes_test
         run: python -m pytest tests/test_postgresql_integration.py tests/test_b1_stock_atomicity.py tests/test_riska_execution_pg.py tests/test_riska_dialogue_pg.py tests/test_riska_crud_pg.py tests/test_riska_agent_pg.py tests/test_toko_transactions_pg.py tests/test_stock_out_internal_use.py tests/test_receipt_number_pg.py tests/test_bagi_hasil_transfer.py -n 0
+
+  # Auto-deploy to the Oracle server (sm85-amd-temp) on push to main, only after all checks pass.
+  # The deploy key is restricted server-side to /opt/deploy/dispatch.sh, which runs /opt/siabumdes/deploy.sh:
+  # build image -> docker compose up -d (this service only) -> health check -> automatic rollback on failure.
+  # Manual rollback on the server: sudo /opt/siabumdes/deploy.sh rollback
+  deploy-oracle:
+    needs: [lint-and-test, integration-pg]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: oracle-deploy-siabumdes
+      cancel-in-progress: false
+    steps:
+      - name: Deploy to Oracle server
+        env:
+          KEY: ${{ secrets.ORACLE_DEPLOY_KEY }}
+          KNOWN: ${{ secrets.ORACLE_KNOWN_HOSTS }}
+          HOST: ${{ secrets.ORACLE_HOST }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/deploy && chmod 600 ~/.ssh/deploy
+          printf '%s\n' "$KNOWN" > ~/.ssh/known_hosts
+          ssh -i ~/.ssh/deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ServerAliveInterval=30 ubuntu@"$HOST" "deploy siabumdes ${{ github.sha }}"

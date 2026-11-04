@@ -9,7 +9,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from modules.siabumdes.adapters.api.deps import require_roles
 from modules.siabumdes.application.services import FinanceService
+from modules.siabumdes.identity.infrastructure.models import User
 from shared.database import get_db
 
 router = APIRouter(prefix="/api/v1/siabumdes", tags=["siabumdes"])
@@ -27,6 +29,7 @@ class JournalEntryRequest(BaseModel):
 @router.post("/journal-entry")
 async def create_journal_entry(
     body: JournalEntryRequest,
+    _: User = Depends(require_roles("admin")),
     session: AsyncSession = Depends(get_db),
 ):
     svc = FinanceService(session)
@@ -54,6 +57,7 @@ async def general_ledger(
     account_id: Optional[str] = Query(None),
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
+    _: User = Depends(require_roles("admin")),
     session: AsyncSession = Depends(get_db),
 ):
     svc = FinanceService(session)
@@ -69,6 +73,7 @@ async def general_ledger(
 async def balance_sheet(
     as_of: date = Query(...),
     group_code: Optional[str] = Query(None),
+    _: User = Depends(require_roles("admin")),
     session: AsyncSession = Depends(get_db),
 ):
     svc = FinanceService(session)

@@ -151,15 +151,12 @@ class CsrfOriginMiddleware(BaseHTTPMiddleware):
                 return response
         try:
             response = await call_next(request)
-        except Exception as exc:
+        except Exception:
             logger.exception("unhandled method=%s path=%s", request.method, request.url.path)
             response = JSONResponse(
                 status_code=500,
                 content={
                     "detail": "Terjadi kesalahan internal pada server",
-                    "error_type": type(exc).__name__,
-                    "error_message": str(exc)[:500],
-                    "path": request.url.path,
                 },
             )
             _apply_cors(response, request.headers.get("origin"))
@@ -182,14 +179,13 @@ async def health():
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
         return {"status": "ok", "database": "connected"}
-    except Exception as exc:
+    except Exception:
         logger.exception("database health check failed")
         return JSONResponse(
             status_code=503,
             content={
                 "status": "degraded",
                 "database": "unavailable",
-                "error_type": type(exc).__name__,
             },
         )
 

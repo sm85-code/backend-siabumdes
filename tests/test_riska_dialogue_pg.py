@@ -225,7 +225,8 @@ async def test_delegation_does_not_grant_readonly_role_write_access(context):
 
 
 @pytest.mark.asyncio
-async def test_http_rbac_ignores_client_role_and_admin_only_assignments(context):
+async def test_http_rbac_ignores_client_role_and_admin_only_assignments(context, monkeypatch):
+    monkeypatch.setenv("RISKA_ENABLED", "true")
     from fastapi import FastAPI
     from httpx import ASGITransport, AsyncClient
     from shared.database import get_db

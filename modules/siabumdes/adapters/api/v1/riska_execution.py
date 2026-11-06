@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.features import require_riska_enabled
 from shared.database import get_db
 from shared.config import public_role, WRITE_LEVEL
 from modules.siabumdes.application.riska_sessions import current_assignment, bind_payload, validate_draft_session, set_assignment, offer_more
@@ -25,8 +26,8 @@ from modules.siabumdes.inventory.application.services import InventoryService
 from modules.siabumdes.inventory.application.stock_mixin import HppMismatchError, stock_in_price_error
 from modules.siabumdes.public_service import SiabumdesPublicService
 
-router = APIRouter(prefix="/api/riska", tags=["riska"])
-admin_router = APIRouter(prefix="/api/v1/admin", tags=["riska-permissions"])
+router = APIRouter(prefix="/api/riska", tags=["riska"], dependencies=[Depends(require_riska_enabled)])
+admin_router = APIRouter(prefix="/api/v1/admin", tags=["riska-permissions"], dependencies=[Depends(require_riska_enabled)])
 
 
 class DraftIn(BaseModel):

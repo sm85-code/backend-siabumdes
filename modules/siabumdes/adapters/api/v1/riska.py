@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.config import REPORT_READ_LEVEL, public_role
+from shared.features import require_riska_enabled
 from shared.database import get_db
 from modules.siabumdes.adapters.api.deps import require_roles
 from modules.siabumdes.adapters.api.scope import is_pengelola
@@ -17,7 +18,7 @@ from modules.siabumdes.identity.infrastructure.models import User
 from modules.siabumdes.application.riska_sessions import current_assignment, finish_assignment, offer_more
 from modules.siabumdes.infrastructure.models import UnitUsaha
 
-router = APIRouter(prefix="/api/riska", tags=["riska"])
+router = APIRouter(prefix="/api/riska", tags=["riska"], dependencies=[Depends(require_riska_enabled)])
 READ = require_roles(*REPORT_READ_LEVEL)
 DENIED = ("Akses ditolak. Tindakan operasional tutup buku, kunci periode, dan transfer bagi hasil "
           "mutlak hanya wewenang Admin Utama.")
